@@ -1,3 +1,9 @@
+//! Interactive user prompts for data entry and editing.
+//!
+//! Each `prompt*` function collects field values from stdin and returns
+//! a populated struct.  The `*ForEdit` variants pre-fill defaults from
+//! the existing value so the user can press Enter to keep them.
+
 const std = @import("std");
 const Io = std.Io;
 const types = @import("../types.zig");
@@ -9,6 +15,8 @@ const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
 
+/// Read one line from stdin, trim trailing `\r`, and return an
+/// owned copy.  Returns `null` on empty input or EOF.
 fn readLine(allocator: std.mem.Allocator, stdin: *Io.Reader) !?[]const u8 {
     const line = (try stdin.takeDelimiter('\n')) orelse return null;
     const trimmed = std.mem.trim(u8, line, "\r");
@@ -16,6 +24,7 @@ fn readLine(allocator: std.mem.Allocator, stdin: *Io.Reader) !?[]const u8 {
     return try allocator.dupe(u8, trimmed);
 }
 
+/// Prompt for a single field and return the user's input.
 fn promptField(allocator: std.mem.Allocator, stdin: *Io.Reader, stdout: *Io.Writer, label: []const u8) !?[]const u8 {
     try stdout.print("{s}: ", .{label});
     try stdout.flush();
@@ -98,6 +107,8 @@ pub fn promptCertification(allocator: std.mem.Allocator, stdin: *Io.Reader, stdo
     };
 }
 
+/// Prompt for a field showing the current value as a default in `[brackets]`.
+/// An empty response preserves the current value.
 fn promptFieldWithDefault(allocator: std.mem.Allocator, stdin: *Io.Reader, stdout: *Io.Writer, label: []const u8, current: ?[]const u8) !?[]const u8 {
     if (current) |cv| {
         try stdout.print("{s} [{s}]: ", .{ label, cv });

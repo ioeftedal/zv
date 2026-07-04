@@ -1,14 +1,21 @@
+//! Build script for the `cv` application.
+//!
+//! Links against the SQLite3 amalgamation (fetched as a Zig package
+//! dependency) and exposes `zig build run` and `zig build test`.
+
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // SQLite3 amalgamation fetched via build.zig.zon
     const sqlite_amalgamation_dep = b.dependency("sqlite_amalgamation", .{
         .target = target,
         .optimize = optimize,
     });
 
+    // Re-usable module exposing the Zig bindings in src/sqlite.zig
     const sqlite_module = b.createModule(.{
         .root_source_file = b.path("src/sqlite.zig"),
         .target = target,

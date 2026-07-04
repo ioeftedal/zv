@@ -1,3 +1,9 @@
+//! Typst source code generator.
+//!
+//! Takes CV data structures and produces a `.typ` file compatible with
+//! the `@preview/basic-resume:0.2.9` template package.  Special
+//! characters (`\`, `"`, `#`, `{`, `}`) are escaped for Typst.
+
 const std = @import("std");
 const types = @import("../types.zig");
 const writer = @import("../writer.zig");
@@ -9,6 +15,12 @@ const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
 
+/// Produce the complete Typst source for a CV.
+///
+/// Each section is rendered as a Typst heading and corresponding
+/// template function calls (`#edu`, `#work`, `#project`,
+/// `#certificates`, `#generic-one-by-two`).  The returned slice is
+/// owned by the caller.
 pub fn generateTypst(
     profile: ?Profile,
     education: []const Education,
@@ -195,6 +207,9 @@ pub fn generateTypst(
     return try buf.toOwnedSlice(allocator);
 }
 
+/// Escape Typst special characters with a backslash prefix.
+///
+/// The escaped characters are: `\`, `"`, `#`, `{`, `}`.
 fn escape(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
     var extra: usize = 0;
     for (s) |c| {

@@ -1,12 +1,26 @@
+//! Thin Zig bindings over the SQLite3 C API.
+//!
+//! Provides a minimal but type-safe wrapper: comptime reflection maps
+//! struct fields to `?`-numbered parameters and reads rows back into
+//! typed Zig structs.  Only SQLite3 amalgamation (``sqlite3.c``) is
+//! supported; the C functions are declared as `extern` in the `c`
+//! namespace at the bottom of this file.
+
 const std = @import("std");
 
+/// All SQLite errors are collapsed into a single variant.
+///
+/// The underlying error message can be retrieved through
+/// `Db.errMsg`.
 pub const Error = error{
     SqliteError,
 };
 
+/// An open SQLite3 database connection.
 pub const Db = struct {
     ptr: *c.sqlite3,
 
+    /// Open (or create) the database at `path` with read/write access.
     pub fn init(path: [:0]const u8) Error!Db {
         var db: ?*c.sqlite3 = null;
         const rc = c.sqlite3_open_v2(
@@ -21,14 +35,20 @@ pub const Db = struct {
         return Db{ .ptr = db.? };
     }
 
+    /// Close the database connection.
     pub fn deinit(self: *Db) void {
         _ = c.sqlite3_close(self.ptr);
     }
 
+    /// Return the most recent error message for this connection.
     pub fn errMsg(self: *const Db) []const u8 {
         return std.mem.sliceTo(c.sqlite3_errmsg(self.ptr), 0);
     }
 
+    /// Execute a SQL statement that does not return rows.
+    ///
+    /// `params` may be a struct (fields map to `?1`, `?2`, … by field
+    /// order) or a single scalar value.
     pub fn exec(self: *Db, comptime sql: []const u8, params: anytype) Error!void {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
@@ -39,6 +59,8 @@ pub const Db = struct {
         }
     }
 
+    /// Execute a query and return at most one row of type `T`, or
+    /// `null` if no rows match.
     pub fn one(self: *Db, allocator: std.mem.Allocator, comptime T: type, comptime sql: []const u8, params: anytype) (Error || std.mem.Allocator.Error)!?T {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
@@ -49,6 +71,7 @@ pub const Db = struct {
         return try readRow(allocator, T, &stmt, 0);
     }
 
+    /// Prepare a SQL statement for repeated execution.
     pub fn prepare(self: *Db, comptime sql: []const u8) Error!Stmt {
         var stmt: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v3(
@@ -66,13 +89,18 @@ pub const Db = struct {
     }
 };
 
+/// A prepared SQL statement.  Must be finalised with `deinit`.
 pub const Stmt = struct {
     ptr: *c.sqlite3_stmt,
 
+    /// Finalise (destroy) this prepared statement.
     pub fn deinit(self: *Stmt) void {
         _ = c.sqlite3_finalize(self.ptr);
     }
 
+    /// Advance the statement to the next row.
+    ///
+    /// Returns `true` if a row is available, `false` when done.
     pub fn step(self: *Stmt) Error!bool {
         const rc = c.sqlite3_step(self.ptr);
         switch (rc) {
@@ -82,6 +110,9 @@ pub const Stmt = struct {
         }
     }
 
+    /// Bind parameters, iterate all result rows, and return them as a
+    /// typed slice.  The slice and any string fields are allocated with
+    /// `allocator`.
     pub fn all(self: *Stmt, comptime T: type, allocator: std.mem.Allocator, params: anytype) (Error || std.mem.Allocator.Error)![]T {
         try bindParams(self, params);
         var list = try std.ArrayList(T).initCapacity(allocator, 0);
@@ -96,6 +127,7 @@ pub const Stmt = struct {
     }
 };
 
+/// Bind struct fields or a scalar value to positional parameters.
 fn bindParams(stmt: *const Stmt, params: anytype) Error!void {
     const T = @TypeOf(params);
     const info = @typeInfo(T);
@@ -114,6 +146,9 @@ fn bindParams(stmt: *const Stmt, params: anytype) Error!void {
     }
 }
 
+/// Bind a single value at the given `?N` index.
+///
+/// Supports `int`, `float`, `?T`, and `[]const u8`.
 fn bindValue(stmt: *const Stmt, index: u32, value: anytype) Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
@@ -150,6 +185,9 @@ fn bindValue(stmt: *const Stmt, index: u32, value: anytype) Error!void {
     }
 }
 
+/// Read the current row of `stmt` into a value of type `T`.
+///
+/// Columns are mapped to struct fields positionally.
 fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, row_index: usize) (Error || std.mem.Allocator.Error)!T {
     _ = row_index;
     var result: T = undefined;
@@ -176,6 +214,10 @@ fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, ro
     return result;
 }
 
+/// Read a single column value into a Zig type.
+///
+/// Handles `int`, `float`, `?T`, and `[]const u8` (allocated via
+/// `allocator`).
 fn readColumnValue(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, col: i32) (Error || std.mem.Allocator.Error)!T {
     switch (@typeInfo(T)) {
         .int => {
@@ -203,6 +245,7 @@ fn readColumnValue(allocator: std.mem.Allocator, comptime T: type, stmt: *const 
     return undefined;
 }
 
+/// Raw C API declarations from the SQLite3 amalgamation.
 pub const c = struct {
     pub const sqlite3 = opaque {};
     pub const sqlite3_stmt = opaque {};

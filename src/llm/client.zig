@@ -1,3 +1,9 @@
+//! HTTP client for Ollama's `/api/generate` endpoint.
+//!
+//! Connects to a local Ollama instance via raw TCP and sends a
+//! non-streaming generate request.  The LLM response is parsed and
+//! the curated summary is returned as a `CuratedCv`.
+
 const std = @import("std");
 const Io = std.Io;
 const types = @import("../types.zig");
@@ -14,10 +20,14 @@ const model_name = "llama3.2";
 const ollama_host = "127.0.0.1";
 const ollama_port = 11434;
 
+/// The subset of LLM output that the application uses after curation.
 pub const CuratedCv = struct {
+    /// Professionally rewritten summary string.
     summary: ?[]const u8 = null,
 };
 
+/// Returns `true` if a TCP connection to the local Ollama server can
+/// be established.
 pub fn isOllamaRunning(io: Io) bool {
     const address = Io.net.IpAddress.parseIp4(ollama_host, ollama_port) catch return false;
     const stream = address.connect(io, .{ .mode = .stream }) catch return false;
@@ -25,6 +35,11 @@ pub fn isOllamaRunning(io: Io) bool {
     return true;
 }
 
+/// Send all CV data to Ollama for AI-powered rewrite.
+///
+/// Builds a prompt, sends it to `/api/generate`, and extracts the
+/// curated `summary` from the JSON response.  Returns `null` if the
+/// LLM output cannot be parsed (callers handle the fallback).
 pub fn curateCv(
     io: Io,
     allocator: std.mem.Allocator,
@@ -61,6 +76,7 @@ pub fn curateCv(
     return try parseCuratedResponse(response_text, allocator);
 }
 
+/// Parse the LLM's JSON output into a `CuratedCv`.
 fn parseCuratedResponse(raw: []const u8, allocator: std.mem.Allocator) !?CuratedCv {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{});
@@ -77,6 +93,7 @@ fn parseCuratedResponse(raw: []const u8, allocator: std.mem.Allocator) !?Curated
     };
 }
 
+/// Extract the `"response"` field from Ollama's JSON envelope.
 fn extractResponse(raw: []const u8, allocator: std.mem.Allocator) !?[]u8 {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{});
@@ -91,6 +108,7 @@ fn extractResponse(raw: []const u8, allocator: std.mem.Allocator) !?[]u8 {
     return try allocator.dupe(u8, text);
 }
 
+/// Perform an HTTP/1.1 POST to `/api/generate` and return the raw body.
 fn sendRequest(io: Io, allocator: std.mem.Allocator, body: []const u8) ![]u8 {
     const address = try Io.net.IpAddress.parseIp4(ollama_host, ollama_port);
     const stream = try address.connect(io, .{ .mode = .stream });
@@ -133,6 +151,7 @@ fn sendRequest(io: Io, allocator: std.mem.Allocator, body: []const u8) ![]u8 {
     return try response.toOwnedSlice(allocator);
 }
 
+/// Parse the `Content-Length` value from an HTTP response header.
 fn contentLength(header: []const u8) ?usize {
     const label = "content-length:";
     if (header.len < label.len) return null;

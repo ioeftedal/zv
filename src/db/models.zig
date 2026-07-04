@@ -1,3 +1,9 @@
+//! CRUD operations for all CV entity types.
+//!
+//! Every public function maps to a single SQL statement.  The generic
+//! `sqlite.zig` wrapper uses comptime reflection to bind struct fields
+//! and read rows back into typed slices.
+
 const std = @import("std");
 const sqlite = @import("sqlite");
 const types = @import("../types.zig");
@@ -9,6 +15,7 @@ const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
 
+/// Insert a new profile row.  The caller-provided `id` is ignored.
 pub fn insertProfile(db: *sqlite.Db, p: Profile) !void {
     try db.exec(
         \\INSERT INTO profile (full_name, email, phone, location, title, summary)
@@ -16,6 +23,7 @@ pub fn insertProfile(db: *sqlite.Db, p: Profile) !void {
     , .{ p.full_name, p.email, p.phone, p.location, p.title, p.summary });
 }
 
+/// Return the most recently inserted profile, or `null` if none exists.
 pub fn getProfile(db: *sqlite.Db, allocator: std.mem.Allocator) !?Profile {
     return try db.one(
         allocator,
@@ -25,6 +33,7 @@ pub fn getProfile(db: *sqlite.Db, allocator: std.mem.Allocator) !?Profile {
     );
 }
 
+/// Update the profile identified by `p.id`.
 pub fn updateProfile(db: *sqlite.Db, p: Profile) !void {
     try db.exec(
         \\UPDATE profile SET full_name=?1, email=?2, phone=?3, location=?4, title=?5, summary=?6 WHERE id=?7

@@ -1,5 +1,13 @@
+//! Database schema definitions.
+//!
+//! All `CREATE TABLE IF NOT EXISTS` statements are defined here so
+//! that schema changes are co-located and easy to review.
+
 const sqlite = @import("sqlite");
 
+/// Create the six CV tables if they do not already exist.
+///
+/// Safe to call repeatedly – each statement uses `IF NOT EXISTS`.
 pub fn createTables(db: *sqlite.Db) !void {
     try db.exec(
         \\CREATE TABLE IF NOT EXISTS profile (

@@ -1,3 +1,9 @@
+//! LLM prompt construction from user data.
+//!
+//! `buildPrompt` serialises every CV section into a plain-text prompt
+//! that instructs an LLM (via Ollama) to rewrite the content into
+//! polished, resume-ready JSON.
+
 const std = @import("std");
 const types = @import("../types.zig");
 const writer = @import("../writer.zig");
@@ -9,6 +15,10 @@ const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
 
+/// Build a prompt that instructs the LLM to rewrite raw CV data into
+/// concise, impactful resume content.
+///
+/// The returned slice is owned by the caller.
 pub fn buildPrompt(
     profile: ?Profile,
     education: []const Education,

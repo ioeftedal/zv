@@ -1,3 +1,11 @@
+//! Entry point for the CV Builder interactive CLI.
+//!
+//! Presents a text-menu loop for managing CV data (profile, education,
+//! experience, projects, skills, certifications) stored in an SQLite
+//! database.  Optionally uses a local Ollama instance for AI-powered
+//! content rewriting before rendering the final CV as a Typst source
+//! file and compiling it to PDF.
+
 const std = @import("std");
 const Io = std.Io;
 const sqlite = @import("sqlite");
@@ -62,18 +70,22 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
+/// Read a single byte from stdin, defaulting to `'6'` (exit) on EOF.
 fn readByte(stdin: *Io.Reader) u8 {
     const line = (stdin.takeDelimiter('\n') catch return '6') orelse return '6';
     if (line.len == 0) return '6';
     return line[0];
 }
 
+/// Read a single byte from stdin, defaulting to `'7'` (back) on EOF.
 fn readChoice(stdin: *Io.Reader) u8 {
     const line = (stdin.takeDelimiter('\n') catch return '7') orelse return '7';
     if (line.len == 0) return '7';
     return line[0];
 }
 
+/// Prompt for a category, collect the relevant data, and insert it
+/// into the database.
 fn handleAdd(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
@@ -115,6 +127,7 @@ fn handleAdd(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloca
     try stdout.flush();
 }
 
+/// Display all entries for a chosen category.
 fn handleList(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
@@ -168,6 +181,7 @@ fn handleList(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
     try stdout.flush();
 }
 
+/// Read a numeric index from stdin, returning `null` on empty input.
 fn readIndex(stdin: *Io.Reader) ?usize {
     const line = (stdin.takeDelimiter('\n') catch return null) orelse return null;
     const trimmed = std.mem.trim(u8, line, "\r");
@@ -175,6 +189,7 @@ fn readIndex(stdin: *Io.Reader) ?usize {
     return std.fmt.parseInt(usize, trimmed, 10) catch null;
 }
 
+/// List, select, and update an entry for a chosen category.
 fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
@@ -270,6 +285,7 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
     try stdout.flush();
 }
 
+/// List, select (with confirmation), and remove an entry.
 fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
@@ -377,6 +393,8 @@ fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, all
     try stdout.flush();
 }
 
+/// Load all data, optionally curate it via Ollama, render to Typst,
+/// write to disk, and attempt to compile with `typst`.
 fn handleGenerate(database: *sqlite.Db, io: Io, stdout: *Io.Writer, allocator: std.mem.Allocator, ollama_ok: bool) !void {
     try stdout.writeAll("Generating CV...\n");
     try stdout.flush();

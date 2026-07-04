@@ -1,6 +1,9 @@
+//! Menu rendering for the interactive CLI.
+
 const std = @import("std");
 const Io = std.Io;
 
+/// Print the top-level menu with choices 1-6.
 pub fn showMainMenu(writer: *Io.Writer) !void {
     try writer.writeAll(
         \\CV Builder
@@ -17,6 +20,7 @@ pub fn showMainMenu(writer: *Io.Writer) !void {
     );
 }
 
+/// Print the category sub-menu with choices 1-7 (7 = back).
 pub fn showCategoryMenu(writer: *Io.Writer) !void {
     try writer.writeAll(
         \\Select category:
@@ -32,6 +36,7 @@ pub fn showCategoryMenu(writer: *Io.Writer) !void {
     );
 }
 
+/// Read a single byte from stdin, returning `'7'` on EOF or error.
 pub fn selectCategory(stdin: *Io.Reader) u8 {
     const ch = (stdin.takeDelimiter('\n') catch return '7');
     if (ch) |c| {
