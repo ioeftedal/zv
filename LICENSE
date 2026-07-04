@@ -24,15 +24,11 @@ SOFTWARE.
 
 Third-Party Notices
 
-This project includes or depends on the following third-party works:
+This project uses or depends on the following third-party works:
 
-sqlite.zig — Zig bindings for SQLite
-  Copyright (c) 2020 Vincent Rischmann <vincent@rischmann.fr>
-  Licensed under the MIT License (lib/sqlite/LICENSE)
-
-basic-resume — Typst CV template
+basic-resume — Typst CV template (basic-resume/; @preview/basic-resume:0.2.9)
   Copyright (c) Stephen Xu (https://stuxf.dev)
-  Licensed under The Unlicense (public domain)
+  Licensed under The Unlicense (public domain) — https://unlicense.org
 
-SQLite — SQL database engine
-  Public domain (https://sqlite.org/copyright.html)
+SQLite — SQL database engine (https://sqlite.org)
+  Public domain — https://sqlite.org/copyright.html
