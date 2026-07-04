@@ -36,11 +36,4 @@ pub fn showCategoryMenu(writer: *Io.Writer) !void {
     );
 }
 
-/// Read a single byte from stdin, returning `'7'` on EOF or error.
-pub fn selectCategory(stdin: *Io.Reader) u8 {
-    const ch = (stdin.takeDelimiter('\n') catch return '7');
-    if (ch) |c| {
-        if (c.len > 0) return c[0];
-    }
-    return '7';
-}
+

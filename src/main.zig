@@ -24,12 +24,16 @@ const Experience = types.Experience;
 const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
+const Category = types.Category;
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    var database = try db.init("cv.db");
+    var arg_it = try init.minimal.args.iterateAllocator(arena);
+    _ = arg_it.skip();
+    const db_path: [:0]const u8 = if (arg_it.next()) |arg| arg else "cv.db";
+    var database = try db.init(db_path);
     defer database.deinit();
 
     var stdout_buf: [4096]u8 = undefined;
@@ -77,110 +81,6 @@ fn readByte(stdin: *Io.Reader) u8 {
     return line[0];
 }
 
-/// Read a single byte from stdin, defaulting to `'7'` (back) on EOF.
-fn readChoice(stdin: *Io.Reader) u8 {
-    const line = (stdin.takeDelimiter('\n') catch return '7') orelse return '7';
-    if (line.len == 0) return '7';
-    return line[0];
-}
-
-/// Prompt for a category, collect the relevant data, and insert it
-/// into the database.
-fn handleAdd(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
-    try menu.showCategoryMenu(stdout);
-    try stdout.flush();
-    const cat = readChoice(stdin);
-
-    switch (cat) {
-        '1' => {
-            const p = try prompts.promptProfile(allocator, stdin, stdout);
-            try models.insertProfile(database, p);
-            try stdout.writeAll("Profile saved.\n");
-        },
-        '2' => {
-            const e = try prompts.promptEducation(allocator, stdin, stdout);
-            try models.insertEducation(database, e);
-            try stdout.writeAll("Education saved.\n");
-        },
-        '3' => {
-            const e = try prompts.promptExperience(allocator, stdin, stdout);
-            try models.insertExperience(database, e);
-            try stdout.writeAll("Experience saved.\n");
-        },
-        '4' => {
-            const p = try prompts.promptProject(allocator, stdin, stdout);
-            try models.insertProject(database, p);
-            try stdout.writeAll("Project saved.\n");
-        },
-        '5' => {
-            const s = try prompts.promptSkill(allocator, stdin, stdout);
-            try models.insertSkill(database, s);
-            try stdout.writeAll("Skill saved.\n");
-        },
-        '6' => {
-            const c = try prompts.promptCertification(allocator, stdin, stdout);
-            try models.insertCertification(database, c);
-            try stdout.writeAll("Certification saved.\n");
-        },
-        else => {},
-    }
-    try stdout.flush();
-}
-
-/// Display all entries for a chosen category.
-fn handleList(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
-    try menu.showCategoryMenu(stdout);
-    try stdout.flush();
-    const cat = readChoice(stdin);
-
-    switch (cat) {
-        '1' => {
-            if (try models.getProfile(database, allocator)) |p| {
-                try stdout.print("Profile: {s}\n", .{p.full_name});
-            } else {
-                try stdout.writeAll("No profile.\n");
-            }
-        },
-        '2' => {
-            const items = try models.getAllEducation(database, allocator);
-            defer allocator.free(items);
-            for (items) |e| {
-                try stdout.print("  {s} – {s}\n", .{ e.institution, e.degree orelse "" });
-            }
-        },
-        '3' => {
-            const items = try models.getAllExperience(database, allocator);
-            defer allocator.free(items);
-            for (items) |e| {
-                try stdout.print("  {s} – {s}\n", .{ e.company, e.position orelse "" });
-            }
-        },
-        '4' => {
-            const items = try models.getAllProjects(database, allocator);
-            defer allocator.free(items);
-            for (items) |p| {
-                try stdout.print("  {s}\n", .{p.name});
-            }
-        },
-        '5' => {
-            const items = try models.getAllSkills(database, allocator);
-            defer allocator.free(items);
-            for (items) |s| {
-                try stdout.print("  {s}: {s}\n", .{ s.category, s.skills });
-            }
-        },
-        '6' => {
-            const items = try models.getAllCertifications(database, allocator);
-            defer allocator.free(items);
-            for (items) |c| {
-                try stdout.print("  {s}\n", .{c.name});
-            }
-        },
-        else => {},
-    }
-    try stdout.flush();
-}
-
 /// Read a numeric index from stdin, returning `null` on empty input.
 fn readIndex(stdin: *Io.Reader) ?usize {
     const line = (stdin.takeDelimiter('\n') catch return null) orelse return null;
@@ -189,14 +89,115 @@ fn readIndex(stdin: *Io.Reader) ?usize {
     return std.fmt.parseInt(usize, trimmed, 10) catch null;
 }
 
+fn promptCategory(stdin: *Io.Reader) ?Category {
+    const ch = readByte(stdin);
+    if (ch == '7') return null;
+    return Category.fromChar(ch);
+}
+
+/// Prompt for a category, collect the relevant data, and insert it
+/// into the database.
+fn handleAdd(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
+    try menu.showCategoryMenu(stdout);
+    try stdout.flush();
+    const cat = promptCategory(stdin) orelse return;
+
+    switch (cat) {
+        .profile => {
+            const p = try prompts.promptProfile(allocator, stdin, stdout);
+            try models.insertProfile(database, p);
+            try stdout.writeAll("Profile saved.\n");
+        },
+        .education => {
+            const e = try prompts.promptEducation(allocator, stdin, stdout);
+            try models.insertEducation(database, e);
+            try stdout.writeAll("Education saved.\n");
+        },
+        .experience => {
+            const e = try prompts.promptExperience(allocator, stdin, stdout);
+            try models.insertExperience(database, e);
+            try stdout.writeAll("Experience saved.\n");
+        },
+        .projects => {
+            const p = try prompts.promptProject(allocator, stdin, stdout);
+            try models.insertProject(database, p);
+            try stdout.writeAll("Project saved.\n");
+        },
+        .skills => {
+            const s = try prompts.promptSkill(allocator, stdin, stdout);
+            try models.insertSkill(database, s);
+            try stdout.writeAll("Skill saved.\n");
+        },
+        .certifications => {
+            const c = try prompts.promptCertification(allocator, stdin, stdout);
+            try models.insertCertification(database, c);
+            try stdout.writeAll("Certification saved.\n");
+        },
+    }
+    try stdout.flush();
+}
+
+/// Display all entries for a chosen category.
+fn handleList(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
+    try menu.showCategoryMenu(stdout);
+    try stdout.flush();
+    const cat = promptCategory(stdin) orelse return;
+
+    switch (cat) {
+        .profile => {
+            if (try models.getProfile(database, allocator)) |p| {
+                try stdout.print("Profile: {s}\n", .{p.full_name});
+            } else {
+                try stdout.writeAll("No profile.\n");
+            }
+        },
+        .education => {
+            const items = try models.getAllEducation(database, allocator);
+            defer allocator.free(items);
+            for (items) |e| {
+                try stdout.print("  {s} – {s}\n", .{ e.institution, e.degree orelse "" });
+            }
+        },
+        .experience => {
+            const items = try models.getAllExperience(database, allocator);
+            defer allocator.free(items);
+            for (items) |e| {
+                try stdout.print("  {s} – {s}\n", .{ e.company, e.position orelse "" });
+            }
+        },
+        .projects => {
+            const items = try models.getAllProjects(database, allocator);
+            defer allocator.free(items);
+            for (items) |p| {
+                try stdout.print("  {s}\n", .{p.name});
+            }
+        },
+        .skills => {
+            const items = try models.getAllSkills(database, allocator);
+            defer allocator.free(items);
+            for (items) |s| {
+                try stdout.print("  {s}: {s}\n", .{ s.category, s.skills });
+            }
+        },
+        .certifications => {
+            const items = try models.getAllCertifications(database, allocator);
+            defer allocator.free(items);
+            for (items) |c| {
+                try stdout.print("  {s}\n", .{c.name});
+            }
+        },
+    }
+    try stdout.flush();
+}
+
 /// List, select, and update an entry for a chosen category.
 fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
-    const cat = readChoice(stdin);
+    const cat = promptCategory(stdin) orelse return;
 
     switch (cat) {
-        '1' => {
+        .profile => {
             if (try models.getProfile(database, allocator)) |p| {
                 const updated = try prompts.promptProfileForEdit(allocator, stdin, stdout, p);
                 try models.updateProfile(database, updated);
@@ -205,196 +206,94 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
                 try stdout.writeAll("No profile. Add one first.\n");
             }
         },
-        '2' => {
-            const items = try models.getAllEducation(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No education entries.\n");
-            for (items, 0..) |e, i| {
-                try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.institution, e.degree orelse "" });
-            }
-            try stdout.writeAll("Enter number to edit (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            const updated = try prompts.promptEducationForEdit(allocator, stdin, stdout, items[idx - 1]);
-            try models.updateEducation(database, updated);
-            try stdout.writeAll("Education entry updated.\n");
-        },
-        '3' => {
-            const items = try models.getAllExperience(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No experience entries.\n");
-            for (items, 0..) |e, i| {
-                try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.company, e.position orelse "" });
-            }
-            try stdout.writeAll("Enter number to edit (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            const updated = try prompts.promptExperienceForEdit(allocator, stdin, stdout, items[idx - 1]);
-            try models.updateExperience(database, updated);
-            try stdout.writeAll("Experience entry updated.\n");
-        },
-        '4' => {
-            const items = try models.getAllProjects(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No project entries.\n");
-            for (items, 0..) |p, i| {
-                try stdout.print("{d}) {s}\n", .{ i + 1, p.name });
-            }
-            try stdout.writeAll("Enter number to edit (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            const updated = try prompts.promptProjectForEdit(allocator, stdin, stdout, items[idx - 1]);
-            try models.updateProject(database, updated);
-            try stdout.writeAll("Project entry updated.\n");
-        },
-        '5' => {
-            const items = try models.getAllSkills(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No skill entries.\n");
-            for (items, 0..) |s, i| {
-                try stdout.print("{d}) {s}: {s}\n", .{ i + 1, s.category, s.skills });
-            }
-            try stdout.writeAll("Enter number to edit (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            const updated = try prompts.promptSkillForEdit(allocator, stdin, stdout, items[idx - 1]);
-            try models.updateSkill(database, updated);
-            try stdout.writeAll("Skill entry updated.\n");
-        },
-        '6' => {
-            const items = try models.getAllCertifications(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No certification entries.\n");
-            for (items, 0..) |c, i| {
-                try stdout.print("{d}) {s}\n", .{ i + 1, c.name });
-            }
-            try stdout.writeAll("Enter number to edit (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            const updated = try prompts.promptCertificationForEdit(allocator, stdin, stdout, items[idx - 1]);
-            try models.updateCertification(database, updated);
-            try stdout.writeAll("Certification entry updated.\n");
-        },
-        else => {},
+        .education => try editGeneric(models.getAllEducation, prompts.promptEducationForEdit, models.updateEducation, database, stdin, stdout, allocator),
+        .experience => try editGeneric(models.getAllExperience, prompts.promptExperienceForEdit, models.updateExperience, database, stdin, stdout, allocator),
+        .projects => try editGeneric(models.getAllProjects, prompts.promptProjectForEdit, models.updateProject, database, stdin, stdout, allocator),
+        .skills => try editGeneric(models.getAllSkills, prompts.promptSkillForEdit, models.updateSkill, database, stdin, stdout, allocator),
+        .certifications => try editGeneric(models.getAllCertifications, prompts.promptCertificationForEdit, models.updateCertification, database, stdin, stdout, allocator),
     }
     try stdout.flush();
+}
+
+fn editGeneric(
+    comptime getAllFn: anytype,
+    comptime promptFn: anytype,
+    comptime updateFn: anytype,
+    database: *sqlite.Db,
+    stdin: *Io.Reader,
+    stdout: *Io.Writer,
+    allocator: std.mem.Allocator,
+) !void {
+    const items = try getAllFn(database, allocator);
+    defer allocator.free(items);
+    if (items.len == 0) return try stdout.writeAll("No entries.\n");
+    for (items, 0..) |item, i| {
+        try stdout.print("{d}) {s}\n", .{ i + 1, itemLabel(item) });
+    }
+    try stdout.writeAll("Enter number to edit (0 to cancel): ");
+    try stdout.flush();
+    const idx = (readIndex(stdin) orelse 0);
+    if (idx == 0 or idx > items.len) return;
+    const updated = try promptFn(allocator, stdin, stdout, items[idx - 1]);
+    try updateFn(database, updated);
+    try stdout.writeAll("Entry updated.\n");
 }
 
 /// List, select (with confirmation), and remove an entry.
 fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
-    const cat = readChoice(stdin);
+    const cat = promptCategory(stdin) orelse return;
 
     switch (cat) {
-        '1' => try stdout.writeAll("Cannot delete profile.\n"),
-        '2' => {
-            const items = try models.getAllEducation(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No education entries.\n");
-            for (items, 0..) |e, i| {
-                try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.institution, e.degree orelse "" });
-            }
-            try stdout.writeAll("Enter number to delete (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            try stdout.print("Are you sure you want to delete \"{s}\"? (y/N): ", .{items[idx - 1].institution});
-            try stdout.flush();
-            const confirm = readByte(stdin);
-            if (confirm == 'y' or confirm == 'Y') {
-                try models.deleteEducation(database, items[idx - 1].id.?);
-                try stdout.writeAll("Education entry deleted.\n");
-            }
-        },
-        '3' => {
-            const items = try models.getAllExperience(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No experience entries.\n");
-            for (items, 0..) |e, i| {
-                try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.company, e.position orelse "" });
-            }
-            try stdout.writeAll("Enter number to delete (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            try stdout.print("Are you sure you want to delete \"{s}\"? (y/N): ", .{items[idx - 1].company});
-            try stdout.flush();
-            const confirm = readByte(stdin);
-            if (confirm == 'y' or confirm == 'Y') {
-                try models.deleteExperience(database, items[idx - 1].id.?);
-                try stdout.writeAll("Experience entry deleted.\n");
-            }
-        },
-        '4' => {
-            const items = try models.getAllProjects(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No project entries.\n");
-            for (items, 0..) |p, i| {
-                try stdout.print("{d}) {s}\n", .{ i + 1, p.name });
-            }
-            try stdout.writeAll("Enter number to delete (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            try stdout.print("Are you sure you want to delete \"{s}\"? (y/N): ", .{items[idx - 1].name});
-            try stdout.flush();
-            const confirm = readByte(stdin);
-            if (confirm == 'y' or confirm == 'Y') {
-                try models.deleteProject(database, items[idx - 1].id.?);
-                try stdout.writeAll("Project entry deleted.\n");
-            }
-        },
-        '5' => {
-            const items = try models.getAllSkills(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No skill entries.\n");
-            for (items, 0..) |s, i| {
-                try stdout.print("{d}) {s}: {s}\n", .{ i + 1, s.category, s.skills });
-            }
-            try stdout.writeAll("Enter number to delete (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            try stdout.print("Are you sure you want to delete \"{s}\"? (y/N): ", .{items[idx - 1].category});
-            try stdout.flush();
-            const confirm = readByte(stdin);
-            if (confirm == 'y' or confirm == 'Y') {
-                try models.deleteSkill(database, items[idx - 1].id.?);
-                try stdout.writeAll("Skill entry deleted.\n");
-            }
-        },
-        '6' => {
-            const items = try models.getAllCertifications(database, allocator);
-            defer allocator.free(items);
-            if (items.len == 0) return try stdout.writeAll("No certification entries.\n");
-            for (items, 0..) |c, i| {
-                try stdout.print("{d}) {s}\n", .{ i + 1, c.name });
-            }
-            try stdout.writeAll("Enter number to delete (0 to cancel): ");
-            try stdout.flush();
-            const idx = (readIndex(stdin) orelse 0);
-            if (idx == 0 or idx > items.len) return;
-            try stdout.print("Are you sure you want to delete \"{s}\"? (y/N): ", .{items[idx - 1].name});
-            try stdout.flush();
-            const confirm = readByte(stdin);
-            if (confirm == 'y' or confirm == 'Y') {
-                try models.deleteCertification(database, items[idx - 1].id.?);
-                try stdout.writeAll("Certification entry deleted.\n");
-            }
-        },
-        else => {},
+        .profile => try stdout.writeAll("Cannot delete profile.\n"),
+        .education => try deleteGeneric(models.getAllEducation, models.deleteEducation, database, stdin, stdout, allocator),
+        .experience => try deleteGeneric(models.getAllExperience, models.deleteExperience, database, stdin, stdout, allocator),
+        .projects => try deleteGeneric(models.getAllProjects, models.deleteProject, database, stdin, stdout, allocator),
+        .skills => try deleteGeneric(models.getAllSkills, models.deleteSkill, database, stdin, stdout, allocator),
+        .certifications => try deleteGeneric(models.getAllCertifications, models.deleteCertification, database, stdin, stdout, allocator),
     }
     try stdout.flush();
 }
 
-/// Load all data, optionally curate it via Ollama, render to Typst,
-/// write to disk, and attempt to compile with `typst`.
+fn deleteGeneric(
+    comptime getAllFn: anytype,
+    comptime deleteFn: anytype,
+    database: *sqlite.Db,
+    stdin: *Io.Reader,
+    stdout: *Io.Writer,
+    allocator: std.mem.Allocator,
+) !void {
+    const items = try getAllFn(database, allocator);
+    defer allocator.free(items);
+    if (items.len == 0) return try stdout.writeAll("No entries.\n");
+    for (items, 0..) |item, i| {
+        try stdout.print("{d}) {s}\n", .{ i + 1, itemLabel(item) });
+    }
+    try stdout.writeAll("Enter number to delete (0 to cancel): ");
+    try stdout.flush();
+    const idx = (readIndex(stdin) orelse 0);
+    if (idx == 0 or idx > items.len) return;
+    try stdout.print("Are you sure? (y/N): ", .{});
+    try stdout.flush();
+    const confirm = readByte(stdin);
+    if (confirm == 'y' or confirm == 'Y') {
+        try deleteFn(database, items[idx - 1].id.?);
+        try stdout.writeAll("Entry deleted.\n");
+    }
+}
+
+fn itemLabel(item: anytype) []const u8 {
+    const T = @TypeOf(item);
+    const field_name = comptime blk: {
+        for (@typeInfo(T).@"struct".field_names) |name| {
+            if (!std.mem.eql(u8, name, "id")) break :blk name;
+        }
+        unreachable;
+    };
+    return @field(item, field_name);
+}
+
 fn handleGenerate(database: *sqlite.Db, io: Io, stdout: *Io.Writer, allocator: std.mem.Allocator, ollama_ok: bool) !void {
     try stdout.writeAll("Generating CV...\n");
     try stdout.flush();

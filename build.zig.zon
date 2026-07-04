@@ -2,7 +2,7 @@
     .name = .cv,
     .version = "0.0.0",
     .fingerprint = 0xb66ffe92e3777c66,
-    .minimum_zig_version = "0.17.0-dev.1158+1d1193aa7",
+    .minimum_zig_version = "0.17.0-dev",
     .dependencies = .{
         .sqlite_amalgamation = .{
             .url = "https://www.sqlite.org/2025/sqlite-amalgamation-3490200.zip",

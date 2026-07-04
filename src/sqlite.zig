@@ -30,12 +30,12 @@ pub const Db = struct {
             null,
         );
         if (rc != c.SQLITE_OK) {
+            std.log.err("sqlite3_open_v2 failed", .{});
             return Error.SqliteError;
         }
         return Db{ .ptr = db.? };
     }
 
-    /// Close the database connection.
     pub fn deinit(self: *Db) void {
         _ = c.sqlite3_close(self.ptr);
     }
@@ -43,6 +43,10 @@ pub const Db = struct {
     /// Return the most recent error message for this connection.
     pub fn errMsg(self: *const Db) []const u8 {
         return std.mem.sliceTo(c.sqlite3_errmsg(self.ptr), 0);
+    }
+
+    fn logErr(self: *const Db) void {
+        std.log.err("sqlite error: {s}", .{self.errMsg()});
     }
 
     /// Execute a SQL statement that does not return rows.
@@ -55,6 +59,7 @@ pub const Db = struct {
         try bindParams(&stmt, params);
         const rc = c.sqlite3_step(stmt.ptr);
         if (rc != c.SQLITE_DONE and rc != c.SQLITE_ROW) {
+            self.logErr();
             return Error.SqliteError;
         }
     }
@@ -67,8 +72,11 @@ pub const Db = struct {
         try bindParams(&stmt, params);
         const rc = c.sqlite3_step(stmt.ptr);
         if (rc == c.SQLITE_DONE) return null;
-        if (rc != c.SQLITE_ROW) return Error.SqliteError;
-        return try readRow(allocator, T, &stmt, 0);
+        if (rc != c.SQLITE_ROW) {
+            self.logErr();
+            return Error.SqliteError;
+        }
+        return try readRow(allocator, T, &stmt);
     }
 
     /// Prepare a SQL statement for repeated execution.
@@ -83,17 +91,18 @@ pub const Db = struct {
             null,
         );
         if (rc != c.SQLITE_OK) {
+            self.logErr();
             return Error.SqliteError;
         }
-        return Stmt{ .ptr = stmt.? };
+        return Stmt{ .ptr = stmt.?, .db = self.ptr };
     }
 };
 
 /// A prepared SQL statement.  Must be finalised with `deinit`.
 pub const Stmt = struct {
     ptr: *c.sqlite3_stmt,
+    db: *c.sqlite3,
 
-    /// Finalise (destroy) this prepared statement.
     pub fn deinit(self: *Stmt) void {
         _ = c.sqlite3_finalize(self.ptr);
     }
@@ -106,7 +115,10 @@ pub const Stmt = struct {
         switch (rc) {
             c.SQLITE_ROW => return true,
             c.SQLITE_DONE => return false,
-            else => return Error.SqliteError,
+            else => {
+                std.log.err("sqlite step error: {s}", .{std.mem.sliceTo(c.sqlite3_errmsg(self.db), 0)});
+                return Error.SqliteError;
+            },
         }
     }
 
@@ -117,11 +129,9 @@ pub const Stmt = struct {
         try bindParams(self, params);
         var list = try std.ArrayList(T).initCapacity(allocator, 0);
         errdefer list.deinit(allocator);
-        var row_index: usize = 0;
         while (try self.step()) {
-            const row = try readRow(allocator, T, self, row_index);
+            const row = try readRow(allocator, T, self);
             try list.append(allocator, row);
-            row_index += 1;
         }
         return try list.toOwnedSlice(allocator);
     }
@@ -181,15 +191,14 @@ fn bindValue(stmt: *const Stmt, index: u32, value: anytype) Error!void {
                 if (rc != c.SQLITE_OK) return Error.SqliteError;
             }
         },
-        else => {},
+        else => @compileError("unsupported type for SQL bind: " ++ @typeName(T)),
     }
 }
 
 /// Read the current row of `stmt` into a value of type `T`.
 ///
 /// Columns are mapped to struct fields positionally.
-fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, row_index: usize) (Error || std.mem.Allocator.Error)!T {
-    _ = row_index;
+fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt) (Error || std.mem.Allocator.Error)!T {
     var result: T = undefined;
     const info = @typeInfo(T);
     const col_count = c.sqlite3_column_count(stmt.ptr);
@@ -209,7 +218,7 @@ fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, ro
                 }
             }
         },
-        else => {},
+        else => @compileError("readRow requires a struct type, got " ++ @typeName(T)),
     }
     return result;
 }
@@ -240,9 +249,8 @@ fn readColumnValue(allocator: std.mem.Allocator, comptime T: type, stmt: *const 
                 return try allocator.dupe(u8, slice);
             }
         },
-        else => {},
+        else => @compileError("unsupported type for SQL column read: " ++ @typeName(T)),
     }
-    return undefined;
 }
 
 /// Raw C API declarations from the SQLite3 amalgamation.

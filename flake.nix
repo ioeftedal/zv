@@ -1,5 +1,5 @@
 {
-  description = "Zig project template";
+  description = "CV Builder — interactive CLI for managing and generating resumes";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

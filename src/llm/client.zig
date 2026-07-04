@@ -108,7 +108,6 @@ fn extractResponse(raw: []const u8, allocator: std.mem.Allocator) !?[]u8 {
     return try allocator.dupe(u8, text);
 }
 
-/// Perform an HTTP/1.1 POST to `/api/generate` and return the raw body.
 fn sendRequest(io: Io, allocator: std.mem.Allocator, body: []const u8) ![]u8 {
     const address = try Io.net.IpAddress.parseIp4(ollama_host, ollama_port);
     const stream = try address.connect(io, .{ .mode = .stream });
@@ -129,11 +128,24 @@ fn sendRequest(io: Io, allocator: std.mem.Allocator, body: []const u8) ![]u8 {
     var stream_reader = stream.reader(io, &read_buf);
     var r = &stream_reader.interface;
 
+    const line = (try r.takeDelimiter('\n')) orelse return error.ConnectionReset;
+    var status_code: u16 = 0;
+    {
+        var it = std.mem.splitScalar(u8, line, ' ');
+        _ = it.first();
+        const status_str = it.next() orelse return error.ConnectionReset;
+        status_code = std.fmt.parseInt(u16, status_str, 10) catch return error.ConnectionReset;
+    }
+    if (status_code < 200 or status_code >= 300) {
+        std.log.err("ollama returned status {d}", .{status_code});
+        return error.OllamaError;
+    }
+
     var content_length: ?usize = null;
     while (true) {
-        const line = (try r.takeDelimiter('\n')) orelse break;
-        if (line.len == 0) break;
-        const header = if (line.len > 0 and line[line.len - 1] == '\r') line[0 .. line.len - 1] else line;
+        const hdr = (try r.takeDelimiter('\n')) orelse break;
+        if (hdr.len == 0) break;
+        const header = if (hdr.len > 0 and hdr[hdr.len - 1] == '\r') hdr[0 .. hdr.len - 1] else hdr;
         if (contentLength(header)) |cl| {
             content_length = cl;
         }
