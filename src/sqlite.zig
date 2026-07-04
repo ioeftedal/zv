@@ -1,10 +1,8 @@
 const std = @import("std");
-const builtin = @import("builtin");
 
 pub const Error = error{
     SqliteError,
     OutOfMemory,
-    InvalidParam,
 };
 
 pub const Db = struct {
@@ -28,10 +26,6 @@ pub const Db = struct {
         _ = c.sqlite3_close(self.ptr);
     }
 
-    pub fn lastInsertRowId(self: Db) i64 {
-        return c.sqlite3_last_insert_rowid(self.ptr);
-    }
-
     pub fn exec(self: Db, comptime sql: []const u8, options: anytype, params: anytype) !void {
         _ = options;
         var stmt = try self.prepare(sql);
@@ -51,7 +45,7 @@ pub const Db = struct {
         const rc = c.sqlite3_step(stmt.ptr);
         if (rc == c.SQLITE_DONE) return null;
         if (rc != c.SQLITE_ROW) return Error.SqliteError;
-        return @as(?T, try readRow(allocator, T, &stmt, 0));
+        return try readRow(allocator, T, &stmt, 0);
     }
 
     pub fn prepare(self: Db, comptime sql: []const u8) !Stmt {
@@ -201,7 +195,7 @@ fn readColumnValue(allocator: std.mem.Allocator, comptime T: type, stmt: *const 
                 const bytes = c.sqlite3_column_text(stmt.ptr, col);
                 const len = c.sqlite3_column_bytes(stmt.ptr, col);
                 const slice = bytes[0..@intCast(len)];
-                return @as(T, allocator.dupe(u8, slice) catch @panic("OOM"));
+                return allocator.dupe(u8, slice) catch @panic("OOM");
             }
         },
         else => {},
@@ -241,8 +235,4 @@ pub const c = struct {
     extern fn sqlite3_column_double(stmt: *const sqlite3_stmt, col: i32) f64;
     extern fn sqlite3_column_text(stmt: *const sqlite3_stmt, col: i32) [*]const u8;
     extern fn sqlite3_column_bytes(stmt: *const sqlite3_stmt, col: i32) i32;
-    extern fn sqlite3_last_insert_rowid(db: *sqlite3) i64;
-    extern fn sqlite3_bind_parameter_index(stmt: *sqlite3_stmt, name: [*]const u8) i32;
-    extern fn sqlite3_changes(db: *sqlite3) i32;
-    extern fn sqlite3_threadsafe() u32;
 };

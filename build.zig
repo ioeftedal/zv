@@ -4,9 +4,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sqlite_dep = b.dependency("sqlite", .{
+    const sqlite_amalgamation_dep = b.dependency("sqlite_amalgamation", .{
         .target = target,
         .optimize = optimize,
+    });
+
+    const sqlite_module = b.createModule(.{
+        .root_source_file = b.path("src/sqlite.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
     });
 
     const exe = b.addExecutable(.{
@@ -16,11 +23,20 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "sqlite", .module = sqlite_dep.module("sqlite") },
+                .{ .name = "sqlite", .module = sqlite_module },
             },
         }),
     });
-    exe.root_module.linkLibrary(sqlite_dep.artifact("sqlite"));
+    exe.root_module.link_libc = true;
+    exe.root_module.addCSourceFile(.{
+        .file = sqlite_amalgamation_dep.path("sqlite3.c"),
+        .flags = &.{
+            "-std=c99",
+            "-DSQLITE_ENABLE_FTS5",
+            "-DSQLITE_THREADSAFE=1",
+        },
+    });
+    exe.root_module.addIncludePath(sqlite_amalgamation_dep.path("."));
 
     b.installArtifact(exe);
 
