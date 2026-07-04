@@ -1,6 +1,7 @@
 # ---> Zig
 .zig-cache/
 zig-out/
+zig-pkg/
 *.o
 
 # ---> Nix
@@ -10,4 +11,20 @@ result-*
 
 # Ignore automatically generated direnv output
 .direnv
+
+# ---> macOS
+.DS_Store
+
+# ---> Editor / LSP artifacts
+.null-ls_*
+
+# ---> Generated CV output
+basic-resume/cv.typ
+basic-resume/cv.pdf
+
+# ---> Runtime database
+cv.db
+
+# ---> Other test artifacts
+test_cimport
 
