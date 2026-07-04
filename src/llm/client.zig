@@ -14,6 +14,10 @@ const model_name = "llama3.2";
 const ollama_host = "127.0.0.1";
 const ollama_port = 11434;
 
+pub const CuratedCv = struct {
+    summary: ?[]const u8 = null,
+};
+
 pub fn isOllamaRunning(io: Io) bool {
     const address = Io.net.IpAddress.parseIp4(ollama_host, ollama_port) catch return false;
     const stream = address.connect(io, .{ .mode = .stream }) catch return false;
@@ -30,9 +34,15 @@ pub fn curateCv(
     projects: []const Project,
     skills: []const Skill,
     certifications: []const Certification,
-) !?[]u8 {
+) !?CuratedCv {
     const prompt = try templates.buildPrompt(
-        profile, education, experience, projects, skills, certifications, allocator,
+        profile,
+        education,
+        experience,
+        projects,
+        skills,
+        certifications,
+        allocator,
     );
     defer allocator.free(prompt);
 
@@ -45,8 +55,26 @@ pub fn curateCv(
 
     const raw_response = try sendRequest(io, allocator, json_body);
 
-    const response_text = try extractResponse(raw_response, allocator);
-    return response_text;
+    const response_text = try extractResponse(raw_response, allocator) orelse return null;
+    defer allocator.free(response_text);
+
+    return try parseCuratedResponse(response_text, allocator);
+}
+
+fn parseCuratedResponse(raw: []const u8, allocator: std.mem.Allocator) !?CuratedCv {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{});
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    const summary = switch (root.object.get("summary") orelse return null) {
+        .string => |s| s,
+        else => return null,
+    };
+
+    return CuratedCv{
+        .summary = try allocator.dupe(u8, summary),
+    };
 }
 
 fn extractResponse(raw: []const u8, allocator: std.mem.Allocator) !?[]u8 {
@@ -87,12 +115,9 @@ fn sendRequest(io: Io, allocator: std.mem.Allocator, body: []const u8) ![]u8 {
     while (true) {
         const line = (try r.takeDelimiter('\n')) orelse break;
         if (line.len == 0) break;
-        if (std.mem.indexOf(u8, line, "content-length:") != null or
-            std.mem.indexOf(u8, line, "Content-Length:") != null)
-        {
-            const colon_idx = std.mem.indexOf(u8, line, ":") orelse continue;
-            const num_str = std.mem.trim(u8, line[colon_idx + 1 ..], " \t\r");
-            content_length = std.fmt.parseInt(usize, num_str, 10) catch null;
+        const header = if (line.len > 0 and line[line.len - 1] == '\r') line[0 .. line.len - 1] else line;
+        if (contentLength(header)) |cl| {
+            content_length = cl;
         }
     }
 
@@ -106,4 +131,15 @@ fn sendRequest(io: Io, allocator: std.mem.Allocator, body: []const u8) ![]u8 {
     }
 
     return try response.toOwnedSlice(allocator);
+}
+
+fn contentLength(header: []const u8) ?usize {
+    const label = "content-length:";
+    if (header.len < label.len) return null;
+    const prefix = header[0..label.len];
+    if (!std.ascii.eqlIgnoreCase(prefix, label)) return null;
+
+    const value_start = label.len;
+    const trimmed = std.mem.trim(u8, header[value_start..], " \t\r");
+    return std.fmt.parseInt(usize, trimmed, 10) catch null;
 }

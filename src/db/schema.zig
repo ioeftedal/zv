@@ -11,8 +11,7 @@ pub fn createTables(db: *sqlite.Db) !void {
         \\  title TEXT,
         \\  summary TEXT
         \\)
-    , .{}, .{});
-
+    , .{});
     try db.exec(
         \\CREATE TABLE IF NOT EXISTS education (
         \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,8 +23,7 @@ pub fn createTables(db: *sqlite.Db) !void {
         \\  gpa TEXT,
         \\  highlights TEXT
         \\)
-    , .{}, .{});
-
+    , .{});
     try db.exec(
         \\CREATE TABLE IF NOT EXISTS experience (
         \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,8 +35,7 @@ pub fn createTables(db: *sqlite.Db) !void {
         \\  description TEXT,
         \\  highlights TEXT
         \\)
-    , .{}, .{});
-
+    , .{});
     try db.exec(
         \\CREATE TABLE IF NOT EXISTS projects (
         \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,16 +47,14 @@ pub fn createTables(db: *sqlite.Db) !void {
         \\  end_date TEXT,
         \\  highlights TEXT
         \\)
-    , .{}, .{});
-
+    , .{});
     try db.exec(
         \\CREATE TABLE IF NOT EXISTS skills (
         \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
         \\  category TEXT NOT NULL,
         \\  skills TEXT NOT NULL
         \\)
-    , .{}, .{});
-
+    , .{});
     try db.exec(
         \\CREATE TABLE IF NOT EXISTS certifications (
         \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,5 +64,5 @@ pub fn createTables(db: *sqlite.Db) !void {
         \\  url TEXT,
         \\  description TEXT
         \\)
-    , .{}, .{});
+    , .{});
 }

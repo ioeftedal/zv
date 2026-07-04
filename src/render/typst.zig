@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("../types.zig");
+const writer = @import("../writer.zig");
 
 const Profile = types.Profile;
 const Education = types.Education;
@@ -7,21 +8,6 @@ const Experience = types.Experience;
 const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
-
-const ListWriter = struct {
-    list: *std.ArrayList(u8),
-    allocator: std.mem.Allocator,
-
-    fn writeAll(self: *ListWriter, data: []const u8) !void {
-        try self.list.appendSlice(self.allocator, data);
-    }
-
-    fn print(self: *ListWriter, comptime fmt: []const u8, args: anytype) !void {
-        const s = try std.fmt.allocPrint(self.allocator, fmt, args);
-        defer self.allocator.free(s);
-        try self.list.appendSlice(self.allocator, s);
-    }
-};
 
 pub fn generateTypst(
     profile: ?Profile,
@@ -33,50 +19,68 @@ pub fn generateTypst(
     allocator: std.mem.Allocator,
 ) ![]u8 {
     var buf = try std.ArrayList(u8).initCapacity(allocator, 4096);
-    var w = ListWriter{ .list = &buf, .allocator = allocator };
+    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
 
     try w.writeAll("#import \"@preview/basic-resume:0.2.9\": *\n\n");
 
-    const name = if (profile) |p| p.full_name else "Your Name";
-    const email = if (profile) |p| p.email orelse "" else "";
-    const phone = if (profile) |p| p.phone orelse "" else "";
-    const location = if (profile) |p| p.location orelse "" else "";
-    const summary = if (profile) |p| p.summary orelse "" else "";
+    if (profile) |p| {
+        const name_esc = try escape(allocator, p.full_name);
+        try w.print("#let name = \"{s}\"\n", .{name_esc});
+        if (p.email) |v| {
+            const v_esc = try escape(allocator, v);
+            try w.print("#let email = \"{s}\"\n", .{v_esc});
+        }
+        if (p.phone) |v| {
+            const v_esc = try escape(allocator, v);
+            try w.print("#let phone = \"{s}\"\n", .{v_esc});
+        }
+        if (p.location) |v| {
+            const v_esc = try escape(allocator, v);
+            try w.print("#let location = \"{s}\"\n", .{v_esc});
+        }
+        const summary = p.summary orelse "";
+        try w.writeAll("\n");
+        try w.writeAll("#show: resume.with(\n");
+        try w.print("  author: name,\n", .{});
+        if (p.location != null) try w.writeAll("  location: location,\n");
+        if (p.email != null) try w.writeAll("  email: email,\n");
+        if (p.phone != null) try w.writeAll("  phone: phone,\n");
+        try w.writeAll("  accent-color: \"#26428b\",\n");
+        try w.writeAll("  font: \"New Computer Modern\",\n");
+        try w.writeAll("  paper: \"us-letter\",\n");
+        try w.writeAll("  author-position: left,\n");
+        try w.writeAll("  personal-info-position: left,\n");
+        try w.writeAll(")\n\n");
 
-    try w.print("#let name = \"{s}\"\n", .{name});
-    if (location.len > 0) try w.print("#let location = \"{s}\"\n", .{location});
-    if (email.len > 0) try w.print("#let email = \"{s}\"\n", .{email});
-    if (phone.len > 0) try w.print("#let phone = \"{s}\"\n", .{phone});
-    try w.writeAll("\n");
-
-    try w.writeAll("#show: resume.with(\n");
-    try w.writeAll("  author: name,\n");
-    if (location.len > 0) try w.writeAll("  location: location,\n");
-    if (email.len > 0) try w.writeAll("  email: email,\n");
-    if (phone.len > 0) try w.writeAll("  phone: phone,\n");
-    try w.writeAll("  accent-color: \"#26428b\",\n");
-    try w.writeAll("  font: \"New Computer Modern\",\n");
-    try w.writeAll("  paper: \"us-letter\",\n");
-    try w.writeAll("  author-position: left,\n");
-    try w.writeAll("  personal-info-position: left,\n");
-    try w.writeAll(")\n\n");
-
-    if (summary.len > 0) {
-        try w.writeAll("== Summary\n\n");
-        try w.print("{s}\n\n", .{summary});
+        if (summary.len > 0) {
+            try w.writeAll("== Summary\n\n");
+            const summary_esc = try escape(allocator, summary);
+            try w.print("{s}\n\n", .{summary_esc});
+        }
     }
 
     if (education.len > 0) {
         try w.writeAll("== Education\n\n");
         for (education) |e| {
             try w.writeAll("#edu(\n");
-            try w.print("  institution: \"{s}\",\n", .{escape(e.institution)});
-            if (e.degree) |v| try w.print("  degree: \"{s}\",\n", .{escape(v)});
+            {
+                const v = try escape(allocator, e.institution);
+                try w.print("  institution: \"{s}\",\n", .{v});
+            }
+            if (e.degree) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  degree: \"{s}\",\n", .{v_esc});
+            }
             if (e.start_date) |s| {
                 const end = e.end_date orelse "";
-                try w.print("  dates: dates-helper(start-date: \"{s}\", end-date: \"{s}\"),\n", .{ escape(s), escape(end) });
+                const s_esc = try escape(allocator, s);
+                const end_esc = try escape(allocator, end);
+                try w.print("  dates: dates-helper(start-date: \"{s}\", end-date: \"{s}\"),\n", .{ s_esc, end_esc });
             }
-            if (e.gpa) |v| try w.print("  gpa: \"{s}\",\n", .{escape(v)});
+            if (e.gpa) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  gpa: \"{s}\",\n", .{v_esc});
+            }
             try w.writeAll(")\n\n");
         }
     }
@@ -85,12 +89,23 @@ pub fn generateTypst(
         try w.writeAll("== Work Experience\n\n");
         for (experience) |e| {
             try w.writeAll("#work(\n");
-            try w.print("  company: \"{s}\",\n", .{escape(e.company)});
-            if (e.position) |v| try w.print("  title: \"{s}\",\n", .{escape(v)});
-            if (e.location) |v| try w.print("  location: \"{s}\",\n", .{escape(v)});
+            {
+                const v = try escape(allocator, e.company);
+                try w.print("  company: \"{s}\",\n", .{v});
+            }
+            if (e.position) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  title: \"{s}\",\n", .{v_esc});
+            }
+            if (e.location) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  location: \"{s}\",\n", .{v_esc});
+            }
             if (e.start_date) |s| {
                 const end = e.end_date orelse "";
-                try w.print("  dates: dates-helper(start-date: \"{s}\", end-date: \"{s}\"),\n", .{ escape(s), escape(end) });
+                const s_esc = try escape(allocator, s);
+                const end_esc = try escape(allocator, end);
+                try w.print("  dates: dates-helper(start-date: \"{s}\", end-date: \"{s}\"),\n", .{ s_esc, end_esc });
             }
             try w.writeAll(")\n\n");
             if (e.description) |v| {
@@ -113,11 +128,19 @@ pub fn generateTypst(
         try w.writeAll("== Projects\n\n");
         for (projects) |p| {
             try w.writeAll("#project(\n");
-            try w.print("  name: \"{s}\",\n", .{escape(p.name)});
-            if (p.url) |v| try w.print("  url: \"{s}\",\n", .{escape(v)});
+            {
+                const v = try escape(allocator, p.name);
+                try w.print("  name: \"{s}\",\n", .{v});
+            }
+            if (p.url) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  url: \"{s}\",\n", .{v_esc});
+            }
             if (p.start_date) |s| {
                 const end = p.end_date orelse "";
-                try w.print("  dates: dates-helper(start-date: \"{s}\", end-date: \"{s}\"),\n", .{ escape(s), escape(end) });
+                const s_esc = try escape(allocator, s);
+                const end_esc = try escape(allocator, end);
+                try w.print("  dates: dates-helper(start-date: \"{s}\", end-date: \"{s}\"),\n", .{ s_esc, end_esc });
             }
             try w.writeAll(")\n\n");
             if (p.description) |v| {
@@ -139,7 +162,9 @@ pub fn generateTypst(
     if (skills.len > 0) {
         try w.writeAll("== Skills\n\n");
         for (skills) |s| {
-            try w.print("#generic-one-by-two(left: \"{s}\", right: \"{s}\")\n\n", .{ escape(s.category), escape(s.skills) });
+            const cat_esc = try escape(allocator, s.category);
+            const skills_esc = try escape(allocator, s.skills);
+            try w.print("#generic-one-by-two(left: \"{s}\", right: \"{s}\")\n\n", .{ cat_esc, skills_esc });
         }
     }
 
@@ -147,10 +172,22 @@ pub fn generateTypst(
         try w.writeAll("== Certifications\n\n");
         for (certifications) |c| {
             try w.writeAll("#certificates(\n");
-            try w.print("  name: \"{s}\",\n", .{escape(c.name)});
-            if (c.issuer) |v| try w.print("  issuer: \"{s}\",\n", .{escape(v)});
-            if (c.url) |v| try w.print("  url: \"{s}\",\n", .{escape(v)});
-            if (c.date) |v| try w.print("  date: \"{s}\",\n", .{escape(v)});
+            {
+                const v = try escape(allocator, c.name);
+                try w.print("  name: \"{s}\",\n", .{v});
+            }
+            if (c.issuer) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  issuer: \"{s}\",\n", .{v_esc});
+            }
+            if (c.url) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  url: \"{s}\",\n", .{v_esc});
+            }
+            if (c.date) |v| {
+                const v_esc = try escape(allocator, v);
+                try w.print("  date: \"{s}\",\n", .{v_esc});
+            }
             try w.writeAll(")\n\n");
         }
     }
@@ -158,6 +195,25 @@ pub fn generateTypst(
     return try buf.toOwnedSlice(allocator);
 }
 
-fn escape(s: []const u8) []const u8 {
-    return s;
+fn escape(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
+    var extra: usize = 0;
+    for (s) |c| {
+        switch (c) {
+            '\\', '"', '#', '{', '}' => extra += 1,
+            else => {},
+        }
+    }
+    if (extra == 0) return try allocator.dupe(u8, s);
+
+    var result = try std.ArrayList(u8).initCapacity(allocator, s.len + extra);
+    for (s) |c| {
+        switch (c) {
+            '\\', '"', '#', '{', '}' => {
+                try result.append(allocator, '\\');
+                try result.append(allocator, c);
+            },
+            else => try result.append(allocator, c),
+        }
+    }
+    return try result.toOwnedSlice(allocator);
 }

@@ -102,7 +102,7 @@ fn promptFieldWithDefault(allocator: std.mem.Allocator, stdin: *Io.Reader, stdou
     if (current) |cv| {
         try stdout.print("{s} [{s}]: ", .{ label, cv });
     } else {
-        try stdout.print("{s}: ", .{ label });
+        try stdout.print("{s}: ", .{label});
     }
     try stdout.flush();
     const line = (try stdin.takeDelimiter('\n')) orelse return current;

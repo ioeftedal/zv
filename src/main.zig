@@ -119,42 +119,46 @@ fn handleList(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
     const cat = readChoice(stdin);
-    _ = allocator;
 
     switch (cat) {
         '1' => {
-            if (try models.getProfile(database)) |p| {
+            if (try models.getProfile(database, allocator)) |p| {
                 try stdout.print("Profile: {s}\n", .{p.full_name});
             } else {
                 try stdout.writeAll("No profile.\n");
             }
         },
         '2' => {
-            const items = try models.getAllEducation(database);
+            const items = try models.getAllEducation(database, allocator);
+            defer allocator.free(items);
             for (items) |e| {
                 try stdout.print("  {s} – {s}\n", .{ e.institution, e.degree orelse "" });
             }
         },
         '3' => {
-            const items = try models.getAllExperience(database);
+            const items = try models.getAllExperience(database, allocator);
+            defer allocator.free(items);
             for (items) |e| {
                 try stdout.print("  {s} – {s}\n", .{ e.company, e.position orelse "" });
             }
         },
         '4' => {
-            const items = try models.getAllProjects(database);
+            const items = try models.getAllProjects(database, allocator);
+            defer allocator.free(items);
             for (items) |p| {
                 try stdout.print("  {s}\n", .{p.name});
             }
         },
         '5' => {
-            const items = try models.getAllSkills(database);
+            const items = try models.getAllSkills(database, allocator);
+            defer allocator.free(items);
             for (items) |s| {
                 try stdout.print("  {s}: {s}\n", .{ s.category, s.skills });
             }
         },
         '6' => {
-            const items = try models.getAllCertifications(database);
+            const items = try models.getAllCertifications(database, allocator);
+            defer allocator.free(items);
             for (items) |c| {
                 try stdout.print("  {s}\n", .{c.name});
             }
@@ -178,7 +182,7 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
 
     switch (cat) {
         '1' => {
-            if (try models.getProfile(database)) |p| {
+            if (try models.getProfile(database, allocator)) |p| {
                 const updated = try prompts.promptProfileForEdit(allocator, stdin, stdout, p);
                 try models.updateProfile(database, updated);
                 try stdout.writeAll("Profile updated.\n");
@@ -187,7 +191,8 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
             }
         },
         '2' => {
-            const items = try models.getAllEducation(database);
+            const items = try models.getAllEducation(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No education entries.\n");
             for (items, 0..) |e, i| {
                 try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.institution, e.degree orelse "" });
@@ -201,7 +206,8 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
             try stdout.writeAll("Education entry updated.\n");
         },
         '3' => {
-            const items = try models.getAllExperience(database);
+            const items = try models.getAllExperience(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No experience entries.\n");
             for (items, 0..) |e, i| {
                 try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.company, e.position orelse "" });
@@ -215,7 +221,8 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
             try stdout.writeAll("Experience entry updated.\n");
         },
         '4' => {
-            const items = try models.getAllProjects(database);
+            const items = try models.getAllProjects(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No project entries.\n");
             for (items, 0..) |p, i| {
                 try stdout.print("{d}) {s}\n", .{ i + 1, p.name });
@@ -229,7 +236,8 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
             try stdout.writeAll("Project entry updated.\n");
         },
         '5' => {
-            const items = try models.getAllSkills(database);
+            const items = try models.getAllSkills(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No skill entries.\n");
             for (items, 0..) |s, i| {
                 try stdout.print("{d}) {s}: {s}\n", .{ i + 1, s.category, s.skills });
@@ -243,7 +251,8 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
             try stdout.writeAll("Skill entry updated.\n");
         },
         '6' => {
-            const items = try models.getAllCertifications(database);
+            const items = try models.getAllCertifications(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No certification entries.\n");
             for (items, 0..) |c, i| {
                 try stdout.print("{d}) {s}\n", .{ i + 1, c.name });
@@ -262,7 +271,6 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
 }
 
 fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
-    _ = allocator;
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
     const cat = readChoice(stdin);
@@ -270,7 +278,8 @@ fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, all
     switch (cat) {
         '1' => try stdout.writeAll("Cannot delete profile.\n"),
         '2' => {
-            const items = try models.getAllEducation(database);
+            const items = try models.getAllEducation(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No education entries.\n");
             for (items, 0..) |e, i| {
                 try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.institution, e.degree orelse "" });
@@ -288,7 +297,8 @@ fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, all
             }
         },
         '3' => {
-            const items = try models.getAllExperience(database);
+            const items = try models.getAllExperience(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No experience entries.\n");
             for (items, 0..) |e, i| {
                 try stdout.print("{d}) {s} – {s}\n", .{ i + 1, e.company, e.position orelse "" });
@@ -306,7 +316,8 @@ fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, all
             }
         },
         '4' => {
-            const items = try models.getAllProjects(database);
+            const items = try models.getAllProjects(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No project entries.\n");
             for (items, 0..) |p, i| {
                 try stdout.print("{d}) {s}\n", .{ i + 1, p.name });
@@ -324,7 +335,8 @@ fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, all
             }
         },
         '5' => {
-            const items = try models.getAllSkills(database);
+            const items = try models.getAllSkills(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No skill entries.\n");
             for (items, 0..) |s, i| {
                 try stdout.print("{d}) {s}: {s}\n", .{ i + 1, s.category, s.skills });
@@ -342,7 +354,8 @@ fn handleDelete(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, all
             }
         },
         '6' => {
-            const items = try models.getAllCertifications(database);
+            const items = try models.getAllCertifications(database, allocator);
+            defer allocator.free(items);
             if (items.len == 0) return try stdout.writeAll("No certification entries.\n");
             for (items, 0..) |c, i| {
                 try stdout.print("{d}) {s}\n", .{ i + 1, c.name });
@@ -368,22 +381,44 @@ fn handleGenerate(database: *sqlite.Db, io: Io, stdout: *Io.Writer, allocator: s
     try stdout.writeAll("Generating CV...\n");
     try stdout.flush();
 
-    const profile = try models.getProfile(database);
-    const education = try models.getAllEducation(database);
-    const experience = try models.getAllExperience(database);
-    const projects = try models.getAllProjects(database);
-    const skills = try models.getAllSkills(database);
-    const certifications = try models.getAllCertifications(database);
+    const profile = try models.getProfile(database, allocator);
+    const education = try models.getAllEducation(database, allocator);
+    defer allocator.free(education);
+    const experience = try models.getAllExperience(database, allocator);
+    defer allocator.free(experience);
+    const projects = try models.getAllProjects(database, allocator);
+    defer allocator.free(projects);
+    const skills = try models.getAllSkills(database, allocator);
+    defer allocator.free(skills);
+    const certifications = try models.getAllCertifications(database, allocator);
+    defer allocator.free(certifications);
 
-    if (ollama_ok) {
-        const _curated = try llm.curateCv(
-            io, allocator, profile, education, experience, projects, skills, certifications,
-        );
-        allocator.free(_curated.?);
+    const curated: ?llm.CuratedCv = if (ollama_ok)
+        llm.curateCv(io, allocator, profile, education, experience, projects, skills, certifications) catch |err| blk: {
+            try stdout.print("Warning: LLM curation failed: {}\n", .{err});
+            try stdout.flush();
+            break :blk null;
+        }
+    else
+        null;
+
+    var curated_profile = profile;
+    if (curated) |c| {
+        if (c.summary) |s| {
+            if (curated_profile) |*p| {
+                p.summary = s;
+            }
+        }
     }
 
     const typst_source = try render.generateTypst(
-        profile, education, experience, projects, skills, certifications, allocator,
+        curated_profile,
+        education,
+        experience,
+        projects,
+        skills,
+        certifications,
+        allocator,
     );
     defer allocator.free(typst_source);
 

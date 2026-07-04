@@ -2,13 +2,12 @@ const std = @import("std");
 
 pub const Error = error{
     SqliteError,
-    OutOfMemory,
 };
 
 pub const Db = struct {
     ptr: *c.sqlite3,
 
-    pub fn init(path: []const u8) !Db {
+    pub fn init(path: [:0]const u8) Error!Db {
         var db: ?*c.sqlite3 = null;
         const rc = c.sqlite3_open_v2(
             path.ptr,
@@ -26,8 +25,11 @@ pub const Db = struct {
         _ = c.sqlite3_close(self.ptr);
     }
 
-    pub fn exec(self: Db, comptime sql: []const u8, options: anytype, params: anytype) !void {
-        _ = options;
+    pub fn errMsg(self: *const Db) []const u8 {
+        return std.mem.sliceTo(c.sqlite3_errmsg(self.ptr), 0);
+    }
+
+    pub fn exec(self: *Db, comptime sql: []const u8, params: anytype) Error!void {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         try bindParams(&stmt, params);
@@ -37,8 +39,7 @@ pub const Db = struct {
         }
     }
 
-    pub fn one(self: Db, allocator: std.mem.Allocator, comptime T: type, comptime sql: []const u8, options: anytype, params: anytype) !?T {
-        _ = options;
+    pub fn one(self: *Db, allocator: std.mem.Allocator, comptime T: type, comptime sql: []const u8, params: anytype) (Error || std.mem.Allocator.Error)!?T {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         try bindParams(&stmt, params);
@@ -48,7 +49,7 @@ pub const Db = struct {
         return try readRow(allocator, T, &stmt, 0);
     }
 
-    pub fn prepare(self: Db, comptime sql: []const u8) !Stmt {
+    pub fn prepare(self: *Db, comptime sql: []const u8) Error!Stmt {
         var stmt: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v3(
             self.ptr,
@@ -72,7 +73,7 @@ pub const Stmt = struct {
         _ = c.sqlite3_finalize(self.ptr);
     }
 
-    pub fn step(self: Stmt) !bool {
+    pub fn step(self: *Stmt) Error!bool {
         const rc = c.sqlite3_step(self.ptr);
         switch (rc) {
             c.SQLITE_ROW => return true,
@@ -81,22 +82,21 @@ pub const Stmt = struct {
         }
     }
 
-    pub fn all(self: Stmt, comptime T: type, allocator: std.mem.Allocator, options: anytype, params: anytype) ![]T {
-        _ = options;
-        try bindParams(&self, params);
+    pub fn all(self: *Stmt, comptime T: type, allocator: std.mem.Allocator, params: anytype) (Error || std.mem.Allocator.Error)![]T {
+        try bindParams(self, params);
         var list = try std.ArrayList(T).initCapacity(allocator, 0);
         errdefer list.deinit(allocator);
         var row_index: usize = 0;
         while (try self.step()) {
-            const row = try readRow(allocator, T, &self, row_index);
+            const row = try readRow(allocator, T, self, row_index);
             try list.append(allocator, row);
             row_index += 1;
         }
-        return list.toOwnedSlice(allocator);
+        return try list.toOwnedSlice(allocator);
     }
 };
 
-fn bindParams(stmt: *const Stmt, params: anytype) !void {
+fn bindParams(stmt: *const Stmt, params: anytype) Error!void {
     const T = @TypeOf(params);
     const info = @typeInfo(T);
     var field_index: u32 = 1;
@@ -114,7 +114,7 @@ fn bindParams(stmt: *const Stmt, params: anytype) !void {
     }
 }
 
-fn bindValue(stmt: *const Stmt, index: u32, value: anytype) !void {
+fn bindValue(stmt: *const Stmt, index: u32, value: anytype) Error!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .int => {
@@ -150,7 +150,7 @@ fn bindValue(stmt: *const Stmt, index: u32, value: anytype) !void {
     }
 }
 
-fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, row_index: usize) !T {
+fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, row_index: usize) (Error || std.mem.Allocator.Error)!T {
     _ = row_index;
     var result: T = undefined;
     const info = @typeInfo(T);
@@ -166,7 +166,7 @@ fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, ro
                         @field(result, name) = @as(FieldType, null);
                     }
                 } else {
-                    const value = readColumnValue(allocator, FieldType, stmt, col_idx);
+                    const value = try readColumnValue(allocator, FieldType, stmt, col_idx);
                     @field(result, name) = value;
                 }
             }
@@ -176,7 +176,7 @@ fn readRow(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, ro
     return result;
 }
 
-fn readColumnValue(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, col: i32) T {
+fn readColumnValue(allocator: std.mem.Allocator, comptime T: type, stmt: *const Stmt, col: i32) (Error || std.mem.Allocator.Error)!T {
     switch (@typeInfo(T)) {
         .int => {
             return @intCast(c.sqlite3_column_int64(stmt.ptr, col));
@@ -188,14 +188,14 @@ fn readColumnValue(allocator: std.mem.Allocator, comptime T: type, stmt: *const 
             if (c.sqlite3_column_type(stmt.ptr, col) == c.SQLITE_NULL) {
                 return null;
             }
-            return readColumnValue(allocator, opt.child, stmt, col);
+            return try readColumnValue(allocator, opt.child, stmt, col);
         },
         .pointer => |ptr| {
             if (ptr.size == .slice and ptr.child == u8) {
                 const bytes = c.sqlite3_column_text(stmt.ptr, col);
                 const len = c.sqlite3_column_bytes(stmt.ptr, col);
                 const slice = bytes[0..@intCast(len)];
-                return allocator.dupe(u8, slice) catch @panic("OOM");
+                return try allocator.dupe(u8, slice);
             }
         },
         else => {},
@@ -222,6 +222,7 @@ pub const c = struct {
 
     extern fn sqlite3_open_v2(path: [*]const u8, db: *?*sqlite3, flags: i32, vfs: ?*anyopaque) i32;
     extern fn sqlite3_close(db: *sqlite3) i32;
+    extern fn sqlite3_errmsg(db: *const sqlite3) [*:0]const u8;
     extern fn sqlite3_prepare_v3(db: *sqlite3, sql: [*]const u8, nByte: i32, flags: u32, stmt: *?*sqlite3_stmt, tail: ?*?[*]const u8) i32;
     extern fn sqlite3_step(stmt: *sqlite3_stmt) i32;
     extern fn sqlite3_finalize(stmt: *sqlite3_stmt) i32;

@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("../types.zig");
+const writer = @import("../writer.zig");
 
 const Profile = types.Profile;
 const Education = types.Education;
@@ -7,21 +8,6 @@ const Experience = types.Experience;
 const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
-
-const ListWriter = struct {
-    list: *std.ArrayList(u8),
-    allocator: std.mem.Allocator,
-
-    fn writeAll(self: *ListWriter, data: []const u8) !void {
-        try self.list.appendSlice(self.allocator, data);
-    }
-
-    fn print(self: *ListWriter, comptime fmt: []const u8, args: anytype) !void {
-        const s = try std.fmt.allocPrint(self.allocator, fmt, args);
-        defer self.allocator.free(s);
-        try self.list.appendSlice(self.allocator, s);
-    }
-};
 
 pub fn buildPrompt(
     profile: ?Profile,
@@ -33,7 +19,7 @@ pub fn buildPrompt(
     allocator: std.mem.Allocator,
 ) ![]u8 {
     var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
-    var w = ListWriter{ .list = &buf, .allocator = allocator };
+    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
 
     try w.writeAll(
         \\You are a professional CV writer. Given the raw user data below, rewrite it into 
