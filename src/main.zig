@@ -26,9 +26,12 @@ const Skill = types.Skill;
 const Certification = types.Certification;
 const Category = types.Category;
 
+var global_io: Io = undefined;
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
+    global_io = io;
 
     var arg_it = try init.minimal.args.iterateAllocator(arena);
     _ = arg_it.skip();
@@ -56,11 +59,11 @@ pub fn main(init: std.process.Init) !void {
 
         const choice = readByte(stdin);
         switch (choice) {
-            '1' => try handleAdd(&database, stdin, stdout, arena),
+            '1' => try handleAdd(&database, io, stdin, stdout, arena, ollama_ok),
             '2' => try handleList(&database, stdin, stdout, arena),
-            '3' => try handleEdit(&database, stdin, stdout, arena),
+            '3' => try handleEdit(&database, io, stdin, stdout, arena, ollama_ok),
             '4' => try handleDelete(&database, stdin, stdout, arena),
-            '5' => try handleGenerate(&database, io, stdin, stdout, arena, ollama_ok),
+            '5' => try handleGenerate(&database, stdout, arena),
             '6' => {
                 try stdout.writeAll("Goodbye!\n");
                 try stdout.flush();
@@ -97,7 +100,7 @@ fn promptCategory(stdin: *Io.Reader) ?Category {
 
 /// Prompt for a category, collect the relevant data, and insert it
 /// into the database.
-fn handleAdd(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
+fn handleAdd(database: *sqlite.Db, io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, ollama_ok: bool) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
     const cat = promptCategory(stdin) orelse return;
@@ -107,21 +110,29 @@ fn handleAdd(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloca
             const p = try prompts.promptProfile(allocator, stdin, stdout);
             try models.insertProfile(database, p);
             try stdout.writeAll("Profile saved.\n");
+            try stdout.flush();
+            if (ollama_ok) try suggestProfile(io, stdin, stdout, allocator, database, p);
         },
         .education => {
             const e = try prompts.promptEducation(allocator, stdin, stdout);
             try models.insertEducation(database, e);
             try stdout.writeAll("Education saved.\n");
+            try stdout.flush();
+            if (ollama_ok) try suggestEducation(io, stdin, stdout, allocator, database, e);
         },
         .experience => {
             const e = try prompts.promptExperience(allocator, stdin, stdout);
             try models.insertExperience(database, e);
             try stdout.writeAll("Experience saved.\n");
+            try stdout.flush();
+            if (ollama_ok) try suggestExperience(io, stdin, stdout, allocator, database, e);
         },
         .projects => {
             const p = try prompts.promptProject(allocator, stdin, stdout);
             try models.insertProject(database, p);
             try stdout.writeAll("Project saved.\n");
+            try stdout.flush();
+            if (ollama_ok) try suggestProject(io, stdin, stdout, allocator, database, p);
         },
         .skills => {
             const s = try prompts.promptSkill(allocator, stdin, stdout);
@@ -132,6 +143,8 @@ fn handleAdd(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloca
             const c = try prompts.promptCertification(allocator, stdin, stdout);
             try models.insertCertification(database, c);
             try stdout.writeAll("Certification saved.\n");
+            try stdout.flush();
+            if (ollama_ok) try suggestCertification(io, stdin, stdout, allocator, database, c);
         },
     }
     try stdout.flush();
@@ -191,7 +204,7 @@ fn handleList(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
 }
 
 /// List, select, and update an entry for a chosen category.
-fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
+fn handleEdit(database: *sqlite.Db, io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, ollama_ok: bool) !void {
     try menu.showCategoryMenu(stdout);
     try stdout.flush();
     const cat = promptCategory(stdin) orelse return;
@@ -202,15 +215,17 @@ fn handleEdit(database: *sqlite.Db, stdin: *Io.Reader, stdout: *Io.Writer, alloc
                 const updated = try prompts.promptProfileForEdit(allocator, stdin, stdout, p);
                 try models.updateProfile(database, updated);
                 try stdout.writeAll("Profile updated.\n");
+                try stdout.flush();
+                if (ollama_ok) try suggestProfile(io, stdin, stdout, allocator, database, updated);
             } else {
                 try stdout.writeAll("No profile. Add one first.\n");
             }
         },
-        .education => try editGeneric(models.getAllEducation, prompts.promptEducationForEdit, models.updateEducation, database, stdin, stdout, allocator),
-        .experience => try editGeneric(models.getAllExperience, prompts.promptExperienceForEdit, models.updateExperience, database, stdin, stdout, allocator),
-        .projects => try editGeneric(models.getAllProjects, prompts.promptProjectForEdit, models.updateProject, database, stdin, stdout, allocator),
+        .education => try editAndSuggest(models.getAllEducation, prompts.promptEducationForEdit, models.updateEducation, llm.curateEducationEntry, suggestEducationApply, database, io, stdin, stdout, allocator, ollama_ok),
+        .experience => try editAndSuggest(models.getAllExperience, prompts.promptExperienceForEdit, models.updateExperience, llm.curateExperienceEntry, suggestExperienceApply, database, io, stdin, stdout, allocator, ollama_ok),
+        .projects => try editAndSuggest(models.getAllProjects, prompts.promptProjectForEdit, models.updateProject, llm.curateProjectEntry, suggestProjectApply, database, io, stdin, stdout, allocator, ollama_ok),
         .skills => try editGeneric(models.getAllSkills, prompts.promptSkillForEdit, models.updateSkill, database, stdin, stdout, allocator),
-        .certifications => try editGeneric(models.getAllCertifications, prompts.promptCertificationForEdit, models.updateCertification, database, stdin, stdout, allocator),
+        .certifications => try editAndSuggest(models.getAllCertifications, prompts.promptCertificationForEdit, models.updateCertification, llm.curateCertificationEntry, suggestCertificationApply, database, io, stdin, stdout, allocator, ollama_ok),
     }
     try stdout.flush();
 }
@@ -294,7 +309,224 @@ fn itemLabel(item: anytype) []const u8 {
     return @field(item, field_name);
 }
 
-fn handleGenerate(database: *sqlite.Db, io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, ollama_ok: bool) !void {
+fn editAndSuggest(
+    comptime getAllFn: anytype,
+    comptime promptFn: anytype,
+    comptime updateFn: anytype,
+    comptime curateFn: anytype,
+    comptime applyFn: anytype,
+    database: *sqlite.Db,
+    io: Io,
+    stdin: *Io.Reader,
+    stdout: *Io.Writer,
+    allocator: std.mem.Allocator,
+    ollama_ok: bool,
+) !void {
+    const items = try getAllFn(database, allocator);
+    defer allocator.free(items);
+    if (items.len == 0) return try stdout.writeAll("No entries.\n");
+    for (items, 0..) |item, i| {
+        try stdout.print("{d}) {s}\n", .{ i + 1, itemLabel(item) });
+    }
+    try stdout.writeAll("Enter number to edit (0 to cancel): ");
+    try stdout.flush();
+    const idx = (readIndex(stdin) orelse 0);
+    if (idx == 0 or idx > items.len) return;
+    const updated = try promptFn(allocator, stdin, stdout, items[idx - 1]);
+    try updateFn(database, updated);
+    try stdout.writeAll("Entry updated.\n");
+    try stdout.flush();
+    if (ollama_ok) {
+        const curated = curateFn(io, allocator, updated) catch |err| {
+            try stdout.print("  AI suggestion skipped ({}).\n", .{err});
+            try stdout.flush();
+            return;
+        };
+        if (curated) |c| {
+            try applyFn(stdout, stdin, database, updated, c);
+        }
+    }
+}
+
+fn suggestProfile(io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, database: *sqlite.Db, p: Profile) !void {
+    try stdout.writeAll("  Checking with AI...\n");
+    try stdout.flush();
+    const curated = llm.curateProfileEntry(io, allocator, p) catch |err| {
+        try stdout.print("  AI suggestion skipped ({}).\n", .{err});
+        try stdout.flush();
+        return;
+    };
+    if (curated) |c| try suggestProfileApply(stdout, stdin, database, p, c);
+}
+
+fn suggestProfileApply(stdout: *Io.Writer, stdin: *Io.Reader, database: *sqlite.Db, p: Profile, c: llm.CuratedProfile) !void {
+    var any = false;
+    if (changed(p.title, c.title)) {
+        try stdout.print("    Title: {s} → {s}\n", .{ displayField(p.title), c.title.? });
+        any = true;
+    }
+    if (changed(p.summary, c.summary)) {
+        try stdout.print("    Summary: {s} → {s}\n", .{ displayField(p.summary), c.summary.? });
+        any = true;
+    }
+    if (!any) return;
+    try stdout.flush();
+
+    if (try prompts.promptYesNo(stdout, stdin, "Apply AI improvements")) {
+        var updated = p;
+        if (c.title) |v| updated.title = v;
+        if (c.summary) |v| updated.summary = v;
+        try models.updateProfile(database, updated);
+        try stdout.writeAll("AI improvements saved.\n");
+    }
+    try stdout.flush();
+}
+
+fn suggestEducation(io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, database: *sqlite.Db, e: Education) !void {
+    try stdout.writeAll("  Checking with AI...\n");
+    try stdout.flush();
+    const curated = llm.curateEducationEntry(io, allocator, e) catch |err| {
+        try stdout.print("  AI suggestion skipped ({}).\n", .{err});
+        try stdout.flush();
+        return;
+    };
+    if (curated) |c| try suggestEducationApply(stdout, stdin, database, e, c);
+}
+
+fn suggestEducationApply(stdout: *Io.Writer, stdin: *Io.Reader, database: *sqlite.Db, e: Education, c: llm.CuratedEducation) !void {
+    if (!changed(e.highlights, c.highlights)) return;
+    try stdout.print("  Education: {s}\n    Highlights: {s} → {s}\n\n", .{
+        displayField(e.degree),
+        displayField(e.highlights),
+        c.highlights.?,
+    });
+    try stdout.flush();
+    if (try prompts.promptYesNo(stdout, stdin, "Apply AI improvements")) {
+        var updated = e;
+        if (c.highlights) |v| updated.highlights = v;
+        try models.updateEducation(database, updated);
+        try stdout.writeAll("AI improvements saved.\n");
+    }
+    try stdout.flush();
+}
+
+fn suggestExperience(io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, database: *sqlite.Db, e: Experience) !void {
+    try stdout.writeAll("  Checking with AI...\n");
+    try stdout.flush();
+    const curated = llm.curateExperienceEntry(io, allocator, e) catch |err| {
+        try stdout.print("  AI suggestion skipped ({}).\n", .{err});
+        try stdout.flush();
+        return;
+    };
+    if (curated) |c| try suggestExperienceApply(stdout, stdin, database, e, c);
+}
+
+fn suggestExperienceApply(stdout: *Io.Writer, stdin: *Io.Reader, database: *sqlite.Db, e: Experience, c: llm.CuratedExperience) !void {
+    var first = true;
+    if (changed(e.position, c.position)) {
+        if (first) {
+            try stdout.print("  Experience: {s} at {s}\n", .{ displayField(e.position), e.company });
+            first = false;
+        }
+        try stdout.print("    Position: {s} → {s}\n", .{ displayField(e.position), c.position.? });
+    }
+    if (changed(e.description, c.description)) {
+        if (first) {
+            try stdout.print("  Experience: {s} at {s}\n", .{ displayField(e.position), e.company });
+            first = false;
+        }
+        try stdout.print("    Description: {s} → {s}\n", .{ displayField(e.description), c.description.? });
+    }
+    if (changed(e.highlights, c.highlights)) {
+        if (first) {
+            try stdout.print("  Experience: {s} at {s}\n", .{ displayField(e.position), e.company });
+            first = false;
+        }
+        try stdout.print("    Highlights: {s} → {s}\n", .{ displayField(e.highlights), c.highlights.? });
+    }
+    if (first) return;
+    try stdout.writeAll("\n");
+    try stdout.flush();
+    if (try prompts.promptYesNo(stdout, stdin, "Apply AI improvements")) {
+        var updated = e;
+        if (c.position) |v| updated.position = v;
+        if (c.description) |v| updated.description = v;
+        if (c.highlights) |v| updated.highlights = v;
+        try models.updateExperience(database, updated);
+        try stdout.writeAll("AI improvements saved.\n");
+    }
+    try stdout.flush();
+}
+
+fn suggestProject(io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, database: *sqlite.Db, p: Project) !void {
+    try stdout.writeAll("  Checking with AI...\n");
+    try stdout.flush();
+    const curated = llm.curateProjectEntry(io, allocator, p) catch |err| {
+        try stdout.print("  AI suggestion skipped ({}).\n", .{err});
+        try stdout.flush();
+        return;
+    };
+    if (curated) |c| try suggestProjectApply(stdout, stdin, database, p, c);
+}
+
+fn suggestProjectApply(stdout: *Io.Writer, stdin: *Io.Reader, database: *sqlite.Db, p: Project, c: llm.CuratedProject) !void {
+    var first = true;
+    if (changed(p.description, c.description)) {
+        if (first) {
+            try stdout.print("  Project: {s}\n", .{p.name});
+            first = false;
+        }
+        try stdout.print("    Description: {s} → {s}\n", .{ displayField(p.description), c.description.? });
+    }
+    if (changed(p.highlights, c.highlights)) {
+        if (first) {
+            try stdout.print("  Project: {s}\n", .{p.name});
+            first = false;
+        }
+        try stdout.print("    Highlights: {s} → {s}\n", .{ displayField(p.highlights), c.highlights.? });
+    }
+    if (first) return;
+    try stdout.writeAll("\n");
+    try stdout.flush();
+    if (try prompts.promptYesNo(stdout, stdin, "Apply AI improvements")) {
+        var updated = p;
+        if (c.description) |v| updated.description = v;
+        if (c.highlights) |v| updated.highlights = v;
+        try models.updateProject(database, updated);
+        try stdout.writeAll("AI improvements saved.\n");
+    }
+    try stdout.flush();
+}
+
+fn suggestCertification(io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, database: *sqlite.Db, c: Certification) !void {
+    try stdout.writeAll("  Checking with AI...\n");
+    try stdout.flush();
+    const curated = llm.curateCertificationEntry(io, allocator, c) catch |err| {
+        try stdout.print("  AI suggestion skipped ({}).\n", .{err});
+        try stdout.flush();
+        return;
+    };
+    if (curated) |c2| try suggestCertificationApply(stdout, stdin, database, c, c2);
+}
+
+fn suggestCertificationApply(stdout: *Io.Writer, stdin: *Io.Reader, database: *sqlite.Db, cert: Certification, c: llm.CuratedCertification) !void {
+    if (!changed(cert.description, c.description)) return;
+    try stdout.print("  Certification: {s}\n    Description: {s} → {s}\n\n", .{
+        cert.name,
+        displayField(cert.description),
+        c.description.?,
+    });
+    try stdout.flush();
+    if (try prompts.promptYesNo(stdout, stdin, "Apply AI improvements")) {
+        var updated = cert;
+        updated.description = c.description;
+        try models.updateCertification(database, updated);
+        try stdout.writeAll("AI improvements saved.\n");
+    }
+    try stdout.flush();
+}
+
+fn handleGenerate(database: *sqlite.Db, stdout: *Io.Writer, allocator: std.mem.Allocator) !void {
     try stdout.writeAll("Generating CV...\n");
     try stdout.flush();
 
@@ -310,38 +542,8 @@ fn handleGenerate(database: *sqlite.Db, io: Io, stdin: *Io.Reader, stdout: *Io.W
     const certifications = try models.getAllCertifications(database, allocator);
     defer allocator.free(certifications);
 
-    const curated: ?llm.CuratedCv = if (ollama_ok) blk: {
-        try stdout.writeAll("  Contacting Ollama...\n");
-        try stdout.flush();
-        break :blk llm.curateCv(io, allocator, profile, education, experience, projects, skills, certifications) catch |err| blk2: {
-            try stdout.print("  Warning: LLM curation failed ({}). Using raw data.\n", .{err});
-            try stdout.flush();
-            break :blk2 null;
-        };
-    } else null;
-
-    var curated_profile = profile;
-    if (curated) |c| {
-        if (c.profile) |cp| {
-            if (curated_profile) |*p| {
-                if (cp.title) |t| p.title = t;
-                if (cp.summary) |s| p.summary = s;
-            }
-        }
-    }
-
-    if (curated) |c| {
-        if (try showCvDiff(stdout, profile, education, experience, projects, certifications, c)) {
-            if (try prompts.promptYesNo(stdout, stdin, "Save these improvements to the database")) {
-                try saveCuratedChanges(database, allocator, profile, education, experience, projects, certifications, c);
-                try stdout.writeAll("Improvements saved to database.\n");
-                try stdout.flush();
-            }
-        }
-    }
-
     const typst_source = try render.generateTypst(
-        curated_profile,
+        profile,
         education,
         experience,
         projects,
@@ -352,12 +554,12 @@ fn handleGenerate(database: *sqlite.Db, io: Io, stdin: *Io.Reader, stdout: *Io.W
     defer allocator.free(typst_source);
 
     const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(io, .{ .sub_path = "basic-resume/cv.typ", .data = typst_source });
+    try cwd.writeFile(global_io, .{ .sub_path = "basic-resume/cv.typ", .data = typst_source });
 
     try stdout.writeAll("basic-resume/cv.typ generated. Running typst compile...\n");
     try stdout.flush();
 
-    var child = std.process.spawn(io, .{
+    var child = std.process.spawn(global_io, .{
         .argv = &.{ "typst", "compile", "basic-resume/cv.typ" },
         .stdin = .ignore,
         .stdout = .ignore,
@@ -366,7 +568,7 @@ fn handleGenerate(database: *sqlite.Db, io: Io, stdin: *Io.Reader, stdout: *Io.W
         try stdout.print("typst not available — run 'typst compile basic-resume/cv.typ' manually ({})\n", .{err});
         return;
     };
-    const term = child.wait(io) catch |err| {
+    const term = child.wait(global_io) catch |err| {
         try stdout.print("warning: failed to wait for typst: {}\n", .{err});
         return;
     };
@@ -394,185 +596,7 @@ fn changed(original: ?[]const u8, curated: ?[]const u8) bool {
     return false;
 }
 
-/// Print a diff of all AI-suggested improvements. Returns `true` if any changes exist.
-fn showCvDiff(
-    stdout: *Io.Writer,
-    profile: ?Profile,
-    education: []const Education,
-    experience: []const Experience,
-    projects: []const Project,
-    certifications: []const Certification,
-    curated: llm.CuratedCv,
-) !bool {
-    var any: bool = false;
-
-    if (curated.profile) |cp| {
-        if (profile) |p| {
-            var header_printed = false;
-            if (changed(p.title, cp.title)) {
-                if (!header_printed) {
-                    try stdout.writeAll("\n  Profile:\n");
-                    header_printed = true;
-                }
-                try stdout.print("    Title: {s} → {s}\n", .{ displayField(p.title), cp.title.? });
-                any = true;
-            }
-            if (changed(p.summary, cp.summary)) {
-                if (!header_printed) {
-                    try stdout.writeAll("\n  Profile:\n");
-                    header_printed = true;
-                }
-                try stdout.print("    Summary: {s} → {s}\n", .{ displayField(p.summary), cp.summary.? });
-                any = true;
-            }
-        }
-    }
-
-    for (education, 0..) |e, i| {
-        if (i >= curated.education.len) break;
-        const ce = curated.education[i];
-        if (!changed(e.highlights, ce.highlights)) continue;
-        if (!any) try stdout.writeAll("\n");
-        try stdout.print("  Education: {s}\n    Highlights: {s} → {s}\n", .{
-            displayField(e.degree),
-            displayField(e.highlights),
-            ce.highlights.?,
-        });
-        any = true;
-    }
-
-    for (experience, 0..) |ex, i| {
-        if (i >= curated.experience.len) break;
-        const ce = curated.experience[i];
-        var first = true;
-        if (changed(ex.position, ce.position)) {
-            if (first) {
-                try stdout.print("  Experience: {s} at {s}\n", .{ displayField(ex.position), ex.company });
-                first = false;
-            }
-            try stdout.print("    Position: {s} → {s}\n", .{ displayField(ex.position), ce.position.? });
-            any = true;
-        }
-        if (changed(ex.description, ce.description)) {
-            if (first) {
-                try stdout.print("  Experience: {s} at {s}\n", .{ displayField(ex.position), ex.company });
-                first = false;
-            }
-            try stdout.print("    Description: {s} → {s}\n", .{ displayField(ex.description), ce.description.? });
-            any = true;
-        }
-        if (changed(ex.highlights, ce.highlights)) {
-            if (first) {
-                try stdout.print("  Experience: {s} at {s}\n", .{ displayField(ex.position), ex.company });
-                first = false;
-            }
-            try stdout.print("    Highlights: {s} → {s}\n", .{ displayField(ex.highlights), ce.highlights.? });
-            any = true;
-        }
-    }
-
-    for (projects, 0..) |pr, i| {
-        if (i >= curated.projects.len) break;
-        const cp = curated.projects[i];
-        var first = true;
-        if (changed(pr.description, cp.description)) {
-            if (first) {
-                try stdout.print("  Project: {s}\n", .{pr.name});
-                first = false;
-            }
-            try stdout.print("    Description: {s} → {s}\n", .{ displayField(pr.description), cp.description.? });
-            any = true;
-        }
-        if (changed(pr.highlights, cp.highlights)) {
-            if (first) {
-                try stdout.print("  Project: {s}\n", .{pr.name});
-                first = false;
-            }
-            try stdout.print("    Highlights: {s} → {s}\n", .{ displayField(pr.highlights), cp.highlights.? });
-            any = true;
-        }
-    }
-
-    for (certifications, 0..) |cert, i| {
-        if (i >= curated.certifications.len) break;
-        const cc = curated.certifications[i];
-        if (!changed(cert.description, cc.description)) continue;
-        try stdout.print("  Certification: {s}\n    Description: {s} → {s}\n", .{
-            cert.name,
-            displayField(cert.description),
-            cc.description.?,
-        });
-        any = true;
-    }
-
-    if (any) try stdout.writeAll("\n");
-    try stdout.flush();
-    return any;
-}
-
 /// Return the field value or "(not set)" for null.
 fn displayField(field: ?[]const u8) []const u8 {
     return field orelse "(not set)";
-}
-
-/// Write all curated changes back to the database.
-fn saveCuratedChanges(
-    database: *sqlite.Db,
-    allocator: std.mem.Allocator,
-    profile: ?Profile,
-    education: []const Education,
-    experience: []const Experience,
-    projects: []const Project,
-    certifications: []const Certification,
-    curated: llm.CuratedCv,
-) !void {
-    _ = allocator;
-
-    if (curated.profile) |cp| {
-        if (profile) |p| {
-            var updated = p;
-            if (cp.title) |t| updated.title = t;
-            if (cp.summary) |s| updated.summary = s;
-            try models.updateProfile(database, updated);
-        }
-    }
-
-    for (education, 0..) |orig, i| {
-        if (i >= curated.education.len) break;
-        const ce = curated.education[i];
-        if (ce.highlights == null) continue;
-        var updated = orig;
-        updated.highlights = ce.highlights;
-        try models.updateEducation(database, updated);
-    }
-
-    for (experience, 0..) |orig, i| {
-        if (i >= curated.experience.len) break;
-        const ce = curated.experience[i];
-        if (ce.position == null and ce.description == null and ce.highlights == null) continue;
-        var updated = orig;
-        if (ce.position) |v| updated.position = v;
-        if (ce.description) |v| updated.description = v;
-        if (ce.highlights) |v| updated.highlights = v;
-        try models.updateExperience(database, updated);
-    }
-
-    for (projects, 0..) |orig, i| {
-        if (i >= curated.projects.len) break;
-        const cp = curated.projects[i];
-        if (cp.description == null and cp.highlights == null) continue;
-        var updated = orig;
-        if (cp.description) |v| updated.description = v;
-        if (cp.highlights) |v| updated.highlights = v;
-        try models.updateProject(database, updated);
-    }
-
-    for (certifications, 0..) |orig, i| {
-        if (i >= curated.certifications.len) break;
-        const cc = curated.certifications[i];
-        if (cc.description == null) continue;
-        var updated = orig;
-        if (cc.description) |v| updated.description = v;
-        try models.updateCertification(database, updated);
-    }
 }

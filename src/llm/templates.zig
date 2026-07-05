@@ -1,9 +1,3 @@
-//! LLM prompt construction from user data.
-//!
-//! `buildPrompt` serialises every CV section into a plain-text prompt
-//! that instructs an LLM (via Ollama) to rewrite the content into
-//! polished, resume-ready JSON.
-
 const std = @import("std");
 const types = @import("../types.zig");
 const writer = @import("../writer.zig");
@@ -12,121 +6,138 @@ const Profile = types.Profile;
 const Education = types.Education;
 const Experience = types.Experience;
 const Project = types.Project;
-const Skill = types.Skill;
 const Certification = types.Certification;
 
-/// Build a prompt that instructs the LLM to rewrite raw CV data into
-/// concise, impactful resume content.
-///
-/// The returned slice is owned by the caller.
-pub fn buildPrompt(
-    profile: ?Profile,
-    education: []const Education,
-    experience: []const Experience,
-    projects: []const Project,
-    skills: []const Skill,
-    certifications: []const Certification,
-    allocator: std.mem.Allocator,
-) ![]u8 {
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
-    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
-
+fn baseInstruction(w: *writer.ListWriter) !void {
     try w.writeAll(
-        \\You are a professional CV writer. Given the raw user data below, rewrite it into 
-        \\concise, impactful content suitable for a professional resume. Return ONLY a JSON 
-        \\object with no additional text or markdown formatting.
+        \\You are a professional CV writer. Given the raw user data below for a single 
+        \\entry, rewrite it into concise, impactful content suitable for a professional 
+        \\resume. Only improve the language, wording, and professionalism within the 
+        \\given entry — do not restructure, merge with other entries, or fabricate 
+        \\information that wasn't already present. Add relevant keywords where 
+        \\appropriate to strengthen the CV.
+        \\
+        \\Return ONLY a JSON object with no additional text or markdown formatting.
         \\
         \\
     );
+}
 
-    if (profile) |p| {
-        try w.print("PROFILE:\nName: {s}\n", .{p.full_name});
-        if (p.email) |v| try w.print("Email: {s}\n", .{v});
-        if (p.phone) |v| try w.print("Phone: {s}\n", .{v});
-        if (p.location) |v| try w.print("Location: {s}\n", .{v});
-        if (p.title) |v| try w.print("Title: {s}\n", .{v});
-        if (p.summary) |v| try w.print("Summary: {s}\n", .{v});
-        try w.writeAll("\n");
-    }
+pub fn buildProfilePrompt(p: Profile, allocator: std.mem.Allocator) ![]u8 {
+    var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
 
-    if (education.len > 0) {
-        try w.writeAll("EDUCATION:\n");
-        for (education) |e| {
-            try w.print("- {s}", .{e.institution});
-            if (e.degree) |v| try w.print(", {s}", .{v});
-            if (e.field_of_study) |v| try w.print(", {s}", .{v});
-            if (e.start_date) |v| try w.print(" ({s}", .{v});
-            if (e.end_date) |v| try w.print(" - {s}", .{v});
-            if (e.start_date != null or e.end_date != null) try w.writeAll(")");
-            try w.writeAll("\n");
-        }
-        try w.writeAll("\n");
-    }
-
-    if (experience.len > 0) {
-        try w.writeAll("EXPERIENCE:\n");
-        for (experience) |e| {
-            try w.print("- {s} at {s}", .{ e.position orelse "Position", e.company });
-            if (e.location) |v| try w.print(", {s}", .{v});
-            if (e.start_date) |v| try w.print(" ({s}", .{v});
-            if (e.end_date) |v| try w.print(" - {s}", .{v});
-            if (e.start_date != null or e.end_date != null) try w.writeAll(")");
-            try w.writeAll("\n");
-            if (e.description) |v| try w.print("  {s}\n", .{v});
-        }
-        try w.writeAll("\n");
-    }
-
-    if (projects.len > 0) {
-        try w.writeAll("PROJECTS:\n");
-        for (projects) |p| {
-            try w.print("- {s}", .{p.name});
-            if (p.url) |v| try w.print(" ({s})", .{v});
-            try w.writeAll("\n");
-            if (p.description) |v| try w.print("  {s}\n", .{v});
-        }
-        try w.writeAll("\n");
-    }
-
-    if (skills.len > 0) {
-        try w.writeAll("SKILLS:\n");
-        for (skills) |s| {
-            try w.print("- {s}: {s}\n", .{ s.category, s.skills });
-        }
-        try w.writeAll("\n");
-    }
-
-    if (certifications.len > 0) {
-        try w.writeAll("CERTIFICATIONS:\n");
-        for (certifications) |c| {
-            try w.print("- {s}", .{c.name});
-            if (c.issuer) |v| try w.print(", {s}", .{v});
-            if (c.date) |v| try w.print(" ({s})", .{v});
-            try w.writeAll("\n");
-        }
-        try w.writeAll("\n");
-    }
+    try baseInstruction(&w);
+    try w.writeAll("PROFILE:\n");
+    try w.print("Name: {s}\n", .{p.full_name});
+    if (p.email) |v| try w.print("Email: {s}\n", .{v});
+    if (p.phone) |v| try w.print("Phone: {s}\n", .{v});
+    if (p.location) |v| try w.print("Location: {s}\n", .{v});
+    if (p.title) |v| try w.print("Title: {s}\n", .{v});
+    if (p.summary) |v| try w.print("Summary: {s}\n", .{v});
+    try w.writeAll("\n");
 
     try w.writeAll(
-        \\Return a JSON object with the following structure (use null for missing fields).
-        \\Only include fields that can be rewritten — preserve the array order and count.
+        \\Return a JSON object with these fields:
         \\{
-        \\  "profile": {
-        \\    "title": "rewritten professional title or null",
-        \\    "summary": "rewritten professional summary or null"
-        \\  },
-        \\  "education": [
-        \\    {"highlights": "rewritten highlights as comma-separated string or null"}
-        \\  ],
-        \\  "experience": [
-        \\    {"position": "rewritten position or null", "description": "rewritten description or null", "highlights": "rewritten highlights as comma-separated string or null"}
-        \\  ],
-        \\  "projects": [
-        \\    {"description": "rewritten description or null", "highlights": "rewritten highlights as comma-separated string or null"}
-        \\  ],
-        \\  "certifications": [
-        \\    {"description": "rewritten description or null"}
-        \\  ]
+        \\  "title": "rewritten professional title or null",
+        \\  "summary": "rewritten professional summary or null"
+        \\}
+    );
+
+    return try buf.toOwnedSlice(allocator);
+}
+
+pub fn buildEducationPrompt(e: Education, allocator: std.mem.Allocator) ![]u8 {
+    var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
+
+    try baseInstruction(&w);
+    try w.writeAll("EDUCATION ENTRY:\n");
+    try w.print("Institution: {s}\n", .{e.institution});
+    if (e.degree) |v| try w.print("Degree: {s}\n", .{v});
+    if (e.field_of_study) |v| try w.print("Field: {s}\n", .{v});
+    if (e.start_date) |v| try w.print("Start: {s}\n", .{v});
+    if (e.end_date) |v| try w.print("End: {s}\n", .{v});
+    if (e.highlights) |v| try w.print("Highlights: {s}\n", .{v});
+    try w.writeAll("\n");
+
+    try w.writeAll(
+        \\Return a JSON object with these fields:
+        \\{
+        \\  "highlights": "rewritten highlights as a concise comma-separated string (elaborate on existing content, or null if none provided)"
+        \\}
+    );
+
+    return try buf.toOwnedSlice(allocator);
+}
+
+pub fn buildExperiencePrompt(e: Experience, allocator: std.mem.Allocator) ![]u8 {
+    var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
+
+    try baseInstruction(&w);
+    try w.writeAll("EXPERIENCE ENTRY:\n");
+    try w.print("Company: {s}\n", .{e.company});
+    if (e.position) |v| try w.print("Position: {s}\n", .{v});
+    if (e.location) |v| try w.print("Location: {s}\n", .{v});
+    if (e.start_date) |v| try w.print("Start: {s}\n", .{v});
+    if (e.end_date) |v| try w.print("End: {s}\n", .{v});
+    if (e.description) |v| try w.print("Description: {s}\n", .{v});
+    if (e.highlights) |v| try w.print("Highlights: {s}\n", .{v});
+    try w.writeAll("\n");
+
+    try w.writeAll(
+        \\Return a JSON object with these fields:
+        \\{
+        \\  "position": "rewritten position title or null",
+        \\  "description": "rewritten description with professional language or null",
+        \\  "highlights": "rewritten highlights as a concise comma-separated string or null"
+        \\}
+    );
+
+    return try buf.toOwnedSlice(allocator);
+}
+
+pub fn buildProjectPrompt(p: Project, allocator: std.mem.Allocator) ![]u8 {
+    var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
+
+    try baseInstruction(&w);
+    try w.writeAll("PROJECT ENTRY:\n");
+    try w.print("Name: {s}\n", .{p.name});
+    if (p.url) |v| try w.print("URL: {s}\n", .{v});
+    if (p.description) |v| try w.print("Description: {s}\n", .{v});
+    if (p.highlights) |v| try w.print("Highlights: {s}\n", .{v});
+    try w.writeAll("\n");
+
+    try w.writeAll(
+        \\Return a JSON object with these fields:
+        \\{
+        \\  "description": "rewritten description with professional language or null",
+        \\  "highlights": "rewritten highlights as a concise comma-separated string or null"
+        \\}
+    );
+
+    return try buf.toOwnedSlice(allocator);
+}
+
+pub fn buildCertificationPrompt(c: Certification, allocator: std.mem.Allocator) ![]u8 {
+    var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+    var w = writer.ListWriter{ .list = &buf, .allocator = allocator };
+
+    try baseInstruction(&w);
+    try w.writeAll("CERTIFICATION ENTRY:\n");
+    try w.print("Name: {s}\n", .{c.name});
+    if (c.issuer) |v| try w.print("Issuer: {s}\n", .{v});
+    if (c.date) |v| try w.print("Date: {s}\n", .{v});
+    if (c.description) |v| try w.print("Description: {s}\n", .{v});
+    try w.writeAll("\n");
+
+    try w.writeAll(
+        \\Return a JSON object with these fields:
+        \\{
+        \\  "description": "rewritten description with professional language or null"
         \\}
     );
 
