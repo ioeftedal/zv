@@ -108,14 +108,25 @@ pub fn buildPrompt(
     }
 
     try w.writeAll(
-        \\Return a JSON object with the following structure (use null for missing fields):
+        \\Return a JSON object with the following structure (use null for missing fields).
+        \\Only include fields that can be rewritten — preserve the array order and count.
         \\{
-        \\  "summary": "rewritten summary...",
-        \\  "education": [{"institution": "...", "degree": "...", "field": "...", "highlights": "..."}],
-        \\  "experience": [{"company": "...", "position": "...", "description": "...", "highlights": ["..."]}],
-        \\  "projects": [{"name": "...", "description": "..."}],
-        \\  "skills": [{"category": "...", "items": ["..."]}],
-        \\  "certifications": [{"name": "...", "issuer": "...", "date": "..."}]
+        \\  "profile": {
+        \\    "title": "rewritten professional title or null",
+        \\    "summary": "rewritten professional summary or null"
+        \\  },
+        \\  "education": [
+        \\    {"highlights": "rewritten highlights as comma-separated string or null"}
+        \\  ],
+        \\  "experience": [
+        \\    {"position": "rewritten position or null", "description": "rewritten description or null", "highlights": "rewritten highlights as comma-separated string or null"}
+        \\  ],
+        \\  "projects": [
+        \\    {"description": "rewritten description or null", "highlights": "rewritten highlights as comma-separated string or null"}
+        \\  ],
+        \\  "certifications": [
+        \\    {"description": "rewritten description or null"}
+        \\  ]
         \\}
     );
 

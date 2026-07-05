@@ -35,5 +35,3 @@ pub fn showCategoryMenu(writer: *Io.Writer) !void {
         \\Category: 
     );
 }
-
-

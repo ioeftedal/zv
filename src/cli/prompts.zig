@@ -15,6 +15,16 @@ const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
 
+/// Prompt for a yes/no confirmation. Returns `true` for y/Y, `false` otherwise.
+pub fn promptYesNo(stdout: *Io.Writer, stdin: *Io.Reader, prompt: []const u8) !bool {
+    try stdout.print("{s} (y/N): ", .{prompt});
+    try stdout.flush();
+    const line = (try stdin.takeDelimiter('\n')) orelse return false;
+    const trimmed = std.mem.trim(u8, line, "\r");
+    if (trimmed.len == 0) return false;
+    return trimmed[0] == 'y' or trimmed[0] == 'Y';
+}
+
 /// Read one line from stdin, trim trailing `\r`, and return an
 /// owned copy.  Returns `null` on empty input or EOF.
 fn readLine(allocator: std.mem.Allocator, stdin: *Io.Reader) !?[]const u8 {

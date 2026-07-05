@@ -60,7 +60,7 @@ pub fn main(init: std.process.Init) !void {
             '2' => try handleList(&database, stdin, stdout, arena),
             '3' => try handleEdit(&database, stdin, stdout, arena),
             '4' => try handleDelete(&database, stdin, stdout, arena),
-            '5' => try handleGenerate(&database, io, stdout, arena, ollama_ok),
+            '5' => try handleGenerate(&database, io, stdin, stdout, arena, ollama_ok),
             '6' => {
                 try stdout.writeAll("Goodbye!\n");
                 try stdout.flush();
@@ -294,7 +294,7 @@ fn itemLabel(item: anytype) []const u8 {
     return @field(item, field_name);
 }
 
-fn handleGenerate(database: *sqlite.Db, io: Io, stdout: *Io.Writer, allocator: std.mem.Allocator, ollama_ok: bool) !void {
+fn handleGenerate(database: *sqlite.Db, io: Io, stdin: *Io.Reader, stdout: *Io.Writer, allocator: std.mem.Allocator, ollama_ok: bool) !void {
     try stdout.writeAll("Generating CV...\n");
     try stdout.flush();
 
@@ -310,20 +310,32 @@ fn handleGenerate(database: *sqlite.Db, io: Io, stdout: *Io.Writer, allocator: s
     const certifications = try models.getAllCertifications(database, allocator);
     defer allocator.free(certifications);
 
-    const curated: ?llm.CuratedCv = if (ollama_ok)
-        llm.curateCv(io, allocator, profile, education, experience, projects, skills, certifications) catch |err| blk: {
-            try stdout.print("Warning: LLM curation failed: {}\n", .{err});
+    const curated: ?llm.CuratedCv = if (ollama_ok) blk: {
+        try stdout.writeAll("  Contacting Ollama...\n");
+        try stdout.flush();
+        break :blk llm.curateCv(io, allocator, profile, education, experience, projects, skills, certifications) catch |err| blk2: {
+            try stdout.print("  Warning: LLM curation failed ({}). Using raw data.\n", .{err});
             try stdout.flush();
-            break :blk null;
-        }
-    else
-        null;
+            break :blk2 null;
+        };
+    } else null;
 
     var curated_profile = profile;
     if (curated) |c| {
-        if (c.summary) |s| {
+        if (c.profile) |cp| {
             if (curated_profile) |*p| {
-                p.summary = s;
+                if (cp.title) |t| p.title = t;
+                if (cp.summary) |s| p.summary = s;
+            }
+        }
+    }
+
+    if (curated) |c| {
+        if (try showCvDiff(stdout, profile, education, experience, projects, certifications, c)) {
+            if (try prompts.promptYesNo(stdout, stdin, "Save these improvements to the database")) {
+                try saveCuratedChanges(database, allocator, profile, education, experience, projects, certifications, c);
+                try stdout.writeAll("Improvements saved to database.\n");
+                try stdout.flush();
             }
         }
     }
@@ -371,4 +383,196 @@ fn handleGenerate(database: *sqlite.Db, io: Io, stdout: *Io.Writer, allocator: s
         },
     }
     try stdout.flush();
+}
+
+/// Returns `true` when the curated value is non-null and differs from the original.
+fn changed(original: ?[]const u8, curated: ?[]const u8) bool {
+    if (curated) |c| {
+        if (original) |o| return !std.mem.eql(u8, o, c);
+        return true;
+    }
+    return false;
+}
+
+/// Print a diff of all AI-suggested improvements. Returns `true` if any changes exist.
+fn showCvDiff(
+    stdout: *Io.Writer,
+    profile: ?Profile,
+    education: []const Education,
+    experience: []const Experience,
+    projects: []const Project,
+    certifications: []const Certification,
+    curated: llm.CuratedCv,
+) !bool {
+    var any: bool = false;
+
+    if (curated.profile) |cp| {
+        if (profile) |p| {
+            var header_printed = false;
+            if (changed(p.title, cp.title)) {
+                if (!header_printed) {
+                    try stdout.writeAll("\n  Profile:\n");
+                    header_printed = true;
+                }
+                try stdout.print("    Title: {s} → {s}\n", .{ displayField(p.title), cp.title.? });
+                any = true;
+            }
+            if (changed(p.summary, cp.summary)) {
+                if (!header_printed) {
+                    try stdout.writeAll("\n  Profile:\n");
+                    header_printed = true;
+                }
+                try stdout.print("    Summary: {s} → {s}\n", .{ displayField(p.summary), cp.summary.? });
+                any = true;
+            }
+        }
+    }
+
+    for (education, 0..) |e, i| {
+        if (i >= curated.education.len) break;
+        const ce = curated.education[i];
+        if (!changed(e.highlights, ce.highlights)) continue;
+        if (!any) try stdout.writeAll("\n");
+        try stdout.print("  Education: {s}\n    Highlights: {s} → {s}\n", .{
+            displayField(e.degree),
+            displayField(e.highlights),
+            ce.highlights.?,
+        });
+        any = true;
+    }
+
+    for (experience, 0..) |ex, i| {
+        if (i >= curated.experience.len) break;
+        const ce = curated.experience[i];
+        var first = true;
+        if (changed(ex.position, ce.position)) {
+            if (first) {
+                try stdout.print("  Experience: {s} at {s}\n", .{ displayField(ex.position), ex.company });
+                first = false;
+            }
+            try stdout.print("    Position: {s} → {s}\n", .{ displayField(ex.position), ce.position.? });
+            any = true;
+        }
+        if (changed(ex.description, ce.description)) {
+            if (first) {
+                try stdout.print("  Experience: {s} at {s}\n", .{ displayField(ex.position), ex.company });
+                first = false;
+            }
+            try stdout.print("    Description: {s} → {s}\n", .{ displayField(ex.description), ce.description.? });
+            any = true;
+        }
+        if (changed(ex.highlights, ce.highlights)) {
+            if (first) {
+                try stdout.print("  Experience: {s} at {s}\n", .{ displayField(ex.position), ex.company });
+                first = false;
+            }
+            try stdout.print("    Highlights: {s} → {s}\n", .{ displayField(ex.highlights), ce.highlights.? });
+            any = true;
+        }
+    }
+
+    for (projects, 0..) |pr, i| {
+        if (i >= curated.projects.len) break;
+        const cp = curated.projects[i];
+        var first = true;
+        if (changed(pr.description, cp.description)) {
+            if (first) {
+                try stdout.print("  Project: {s}\n", .{pr.name});
+                first = false;
+            }
+            try stdout.print("    Description: {s} → {s}\n", .{ displayField(pr.description), cp.description.? });
+            any = true;
+        }
+        if (changed(pr.highlights, cp.highlights)) {
+            if (first) {
+                try stdout.print("  Project: {s}\n", .{pr.name});
+                first = false;
+            }
+            try stdout.print("    Highlights: {s} → {s}\n", .{ displayField(pr.highlights), cp.highlights.? });
+            any = true;
+        }
+    }
+
+    for (certifications, 0..) |cert, i| {
+        if (i >= curated.certifications.len) break;
+        const cc = curated.certifications[i];
+        if (!changed(cert.description, cc.description)) continue;
+        try stdout.print("  Certification: {s}\n    Description: {s} → {s}\n", .{
+            cert.name,
+            displayField(cert.description),
+            cc.description.?,
+        });
+        any = true;
+    }
+
+    if (any) try stdout.writeAll("\n");
+    try stdout.flush();
+    return any;
+}
+
+/// Return the field value or "(not set)" for null.
+fn displayField(field: ?[]const u8) []const u8 {
+    return field orelse "(not set)";
+}
+
+/// Write all curated changes back to the database.
+fn saveCuratedChanges(
+    database: *sqlite.Db,
+    allocator: std.mem.Allocator,
+    profile: ?Profile,
+    education: []const Education,
+    experience: []const Experience,
+    projects: []const Project,
+    certifications: []const Certification,
+    curated: llm.CuratedCv,
+) !void {
+    _ = allocator;
+
+    if (curated.profile) |cp| {
+        if (profile) |p| {
+            var updated = p;
+            if (cp.title) |t| updated.title = t;
+            if (cp.summary) |s| updated.summary = s;
+            try models.updateProfile(database, updated);
+        }
+    }
+
+    for (education, 0..) |orig, i| {
+        if (i >= curated.education.len) break;
+        const ce = curated.education[i];
+        if (ce.highlights == null) continue;
+        var updated = orig;
+        updated.highlights = ce.highlights;
+        try models.updateEducation(database, updated);
+    }
+
+    for (experience, 0..) |orig, i| {
+        if (i >= curated.experience.len) break;
+        const ce = curated.experience[i];
+        if (ce.position == null and ce.description == null and ce.highlights == null) continue;
+        var updated = orig;
+        if (ce.position) |v| updated.position = v;
+        if (ce.description) |v| updated.description = v;
+        if (ce.highlights) |v| updated.highlights = v;
+        try models.updateExperience(database, updated);
+    }
+
+    for (projects, 0..) |orig, i| {
+        if (i >= curated.projects.len) break;
+        const cp = curated.projects[i];
+        if (cp.description == null and cp.highlights == null) continue;
+        var updated = orig;
+        if (cp.description) |v| updated.description = v;
+        if (cp.highlights) |v| updated.highlights = v;
+        try models.updateProject(database, updated);
+    }
+
+    for (certifications, 0..) |orig, i| {
+        if (i >= curated.certifications.len) break;
+        const cc = curated.certifications[i];
+        if (cc.description == null) continue;
+        var updated = orig;
+        if (cc.description) |v| updated.description = v;
+        try models.updateCertification(database, updated);
+    }
 }
