@@ -15,14 +15,17 @@ const Project = types.Project;
 const Skill = types.Skill;
 const Certification = types.Certification;
 
-/// Prompt for a yes/no confirmation. Returns `true` for y/Y, `false` otherwise.
-pub fn promptYesNo(stdout: *Io.Writer, stdin: *Io.Reader, prompt: []const u8) !bool {
-    try stdout.print("{s} (y/N): ", .{prompt});
+/// Prompt to pick 0-3 (0 = keep original, 1-3 to accept that version).
+/// Returns null on empty/EOF input, which the caller should treat as 0.
+pub fn promptPickOption(stdout: *Io.Writer, stdin: *Io.Reader) !?u8 {
+    try stdout.writeAll("  Choose 0-3 (0 = keep original): ");
     try stdout.flush();
-    const line = (try stdin.takeDelimiter('\n')) orelse return false;
+    const line = (try stdin.takeDelimiter('\n')) orelse return null;
     const trimmed = std.mem.trim(u8, line, "\r");
-    if (trimmed.len == 0) return false;
-    return trimmed[0] == 'y' or trimmed[0] == 'Y';
+    if (trimmed.len == 0) return null;
+    const ch = trimmed[0];
+    if (ch < '0' or ch > '3') return null;
+    return ch - '0';
 }
 
 /// Read one line from stdin, trim trailing `\r`, and return an

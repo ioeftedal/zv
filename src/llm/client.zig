@@ -7,7 +7,6 @@ const Profile = types.Profile;
 const Education = types.Education;
 const Experience = types.Experience;
 const Project = types.Project;
-const Skill = types.Skill;
 const Certification = types.Certification;
 
 const model_name = "llama3.2";
@@ -45,88 +44,106 @@ pub fn isOllamaRunning(io: Io) bool {
     return true;
 }
 
-pub fn curateProfileEntry(io: Io, allocator: std.mem.Allocator, p: Profile) !?CuratedProfile {
+pub fn curateProfileEntry(io: Io, allocator: std.mem.Allocator, p: Profile) !?[3]CuratedProfile {
     const prompt = try templates.buildProfilePrompt(p, allocator);
     defer allocator.free(prompt);
-    return curateEntry(io, allocator, prompt, CuratedProfile) catch null;
+    return curateEntry3(io, allocator, prompt, CuratedProfile);
 }
 
-pub fn curateEducationEntry(io: Io, allocator: std.mem.Allocator, e: Education) !?CuratedEducation {
+pub fn curateEducationEntry(io: Io, allocator: std.mem.Allocator, e: Education) !?[3]CuratedEducation {
     const prompt = try templates.buildEducationPrompt(e, allocator);
     defer allocator.free(prompt);
-    return curateEntry(io, allocator, prompt, CuratedEducation) catch null;
+    return curateEntry3(io, allocator, prompt, CuratedEducation);
 }
 
-pub fn curateExperienceEntry(io: Io, allocator: std.mem.Allocator, e: Experience) !?CuratedExperience {
+pub fn curateExperienceEntry(io: Io, allocator: std.mem.Allocator, e: Experience) !?[3]CuratedExperience {
     const prompt = try templates.buildExperiencePrompt(e, allocator);
     defer allocator.free(prompt);
-    return curateEntry(io, allocator, prompt, CuratedExperience) catch null;
+    return curateEntry3(io, allocator, prompt, CuratedExperience);
 }
 
-pub fn curateProjectEntry(io: Io, allocator: std.mem.Allocator, p: Project) !?CuratedProject {
+pub fn curateProjectEntry(io: Io, allocator: std.mem.Allocator, p: Project) !?[3]CuratedProject {
     const prompt = try templates.buildProjectPrompt(p, allocator);
     defer allocator.free(prompt);
-    return curateEntry(io, allocator, prompt, CuratedProject) catch null;
+    return curateEntry3(io, allocator, prompt, CuratedProject);
 }
 
-pub fn curateCertificationEntry(io: Io, allocator: std.mem.Allocator, c: Certification) !?CuratedCertification {
+pub fn curateCertificationEntry(io: Io, allocator: std.mem.Allocator, c: Certification) !?[3]CuratedCertification {
     const prompt = try templates.buildCertificationPrompt(c, allocator);
     defer allocator.free(prompt);
-    return curateEntry(io, allocator, prompt, CuratedCertification) catch null;
+    return curateEntry3(io, allocator, prompt, CuratedCertification);
 }
 
-fn curateEntry(io: Io, allocator: std.mem.Allocator, prompt: []const u8, comptime T: type) !T {
-    const json_body = try std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(.{
-        .model = model_name,
-        .prompt = prompt,
-        .stream = false,
-    }, .{})});
-    defer allocator.free(json_body);
+fn curateEntry3(io: Io, allocator: std.mem.Allocator, base_prompt: []const u8, comptime T: type) !?[3]T {
+    var result: [3]T = undefined;
+    var i: usize = 0;
+    while (i < 3) : (i += 1) {
+        const variation_prompt = try std.fmt.allocPrint(allocator, "{s}\n\nThis is variation {d} of 3. Provide a unique professional rewording distinct from the other variations.", .{ base_prompt, i + 1 });
+        defer allocator.free(variation_prompt);
 
-    const raw_response = try sendRequest(io, allocator, json_body);
-    defer allocator.free(raw_response);
+        const json_body = try std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(.{
+            .model = model_name,
+            .prompt = variation_prompt,
+            .stream = false,
+        }, .{})});
+        defer allocator.free(json_body);
 
-    const response_text = try extractResponse(raw_response, allocator) orelse return error.OllamaEmpty;
-    defer allocator.free(response_text);
+        const raw_response = sendRequest(io, allocator, json_body) catch {
+            result[i] = T{};
+            continue;
+        };
+        defer allocator.free(raw_response);
 
-    return parseCurated(response_text, allocator, T);
+        const response_text = extractResponse(raw_response, allocator) catch {
+            result[i] = T{};
+            continue;
+        } orelse {
+            result[i] = T{};
+            continue;
+        };
+        defer allocator.free(response_text);
+
+        const trimmed = std.mem.trim(u8, response_text, " \t\r\n");
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{}) catch {
+            result[i] = T{};
+            continue;
+        };
+        defer parsed.deinit();
+
+        result[i] = parseOne(parsed.value, allocator, T);
+    }
+    return result;
 }
 
-fn parseCurated(raw: []const u8, allocator: std.mem.Allocator, comptime T: type) !T {
-    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{});
-    defer parsed.deinit();
-
-    const root = parsed.value;
-
+fn parseOne(value: std.json.Value, allocator: std.mem.Allocator, comptime T: type) T {
     switch (T) {
         CuratedProfile => {
             return CuratedProfile{
-                .title = try extractString(root, "title", allocator),
-                .summary = try extractString(root, "summary", allocator),
+                .title = extractString(value, "title", allocator) catch null,
+                .summary = extractString(value, "summary", allocator) catch null,
             };
         },
         CuratedEducation => {
             return CuratedEducation{
-                .highlights = try extractHighlights(root, allocator),
+                .highlights = extractHighlights(value, allocator) catch null,
             };
         },
         CuratedExperience => {
             return CuratedExperience{
-                .position = try extractString(root, "position", allocator),
-                .description = try extractString(root, "description", allocator),
-                .highlights = try extractHighlights(root, allocator),
+                .position = extractString(value, "position", allocator) catch null,
+                .description = extractString(value, "description", allocator) catch null,
+                .highlights = extractHighlights(value, allocator) catch null,
             };
         },
         CuratedProject => {
             return CuratedProject{
-                .description = try extractString(root, "description", allocator),
-                .highlights = try extractHighlights(root, allocator),
+                .description = extractString(value, "description", allocator) catch null,
+                .highlights = extractHighlights(value, allocator) catch null,
             };
         },
         CuratedCertification => {
             return CuratedCertification{
-                .description = try extractString(root, "description", allocator),
+                .description = extractString(value, "description", allocator) catch null,
             };
         },
         else => @compileError("unsupported type: " ++ @typeName(T)),
